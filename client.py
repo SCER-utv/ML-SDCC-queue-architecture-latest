@@ -170,6 +170,16 @@ def main():
             except ValueError:
                 print(" Invalid input. Please enter integers only.")
 
+        print("\n Select Training Strategy:")
+        print("  1) Homogeneous  [Same parameters for all workers]")
+        print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
+        while True:
+            strat_choice = input(" Enter 1 or 2: ").strip()
+            if strat_choice in ['1', '2']:
+                strategy_type = "homogeneous" if strat_choice == '1' else "heterogeneous"
+                break
+            print(" Invalid choice.")
+
         print("\n Select Hyperparameter Source:")
         print("  1) Golden Standard (Auto-optimized per dataset)")
         print("  2) Manual Configuration")
@@ -182,38 +192,55 @@ def main():
 
         custom_hyperparams = None
         
-        if hyper_source == '1':
-            print("\n Select Training Strategy:")
-            print("  1) Homogeneous  [Same parameters for all workers]")
-            print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
-            while True:
-                strat_choice = input(" Enter 1 or 2: ").strip()
-                if strat_choice in ['1', '2']:
-                    strategy_type = "homogeneous" if strat_choice == '1' else "heterogeneous"
-                    break
-                print(" Invalid choice.")
-        else:
-            print("\n [MANUAL HYPERPARAMETERS]")
-            strategy_type = "manual"
+        if hyper_source == '2':
+            print("\n [MANUAL HYPERPARAMETERS CONFIGURATION]")
+            custom_hyperparams = []
             
-            raw_depth = input(" Max Depth (Leave blank for None): ").strip()
-            max_depth = int(raw_depth) if raw_depth.isdigit() else None
+            # If homogeneous, we ask for the parameters only once. If heterogeneous, we iterate for each worker
+            iterations = 1 if strategy_type == "homogeneous" else workers
             
-            raw_features = input(" Max Features [sqrt, log2, float] (Default: sqrt): ").strip()
-            max_features = raw_features if raw_features else "sqrt"
-            try:
-                max_features = float(max_features)
-            except ValueError:
-                pass # Keeps it as string like "sqrt" or "log2"
+            for w in range(iterations):
+                if strategy_type == "heterogeneous":
+                    print(f"\n --- Configuring Worker {w+1}/{workers} ---")
+                else:
+                    print("\n --- Configuring Global Parameters ---")
+                    
+                raw_depth = input(" Max Depth (int, or blank for None): ").strip()
+                max_depth = int(raw_depth) if raw_depth.isdigit() else None
                 
-            raw_samples = input(" Max Samples per Tree [0.0 - 1.0] (Default: 1.0): ").strip()
-            max_samples = float(raw_samples) if raw_samples else 1.0
-            
-            custom_hyperparams = {
-                "max_depth": max_depth,
-                "max_features": max_features,
-                "max_samples": max_samples
-            }
+                raw_split = input(" Min Samples Split (int, default: 2): ").strip()
+                min_samples_split = int(raw_split) if raw_split.isdigit() else 2
+                
+                raw_leaf = input(" Min Samples Leaf (int, default: 1): ").strip()
+                min_samples_leaf = int(raw_leaf) if raw_leaf.isdigit() else 1
+
+                raw_features = input(" Max Features [sqrt, log2, float] (Default: sqrt): ").strip()
+                max_features = raw_features if raw_features else "sqrt"
+                try:
+                    max_features = float(max_features)
+                except ValueError:
+                    pass # Maintains strings like 'sqrt'
+                    
+                raw_samples = input(" Max Samples per Tree [0.0 - 1.0] (Default: 1.0): ").strip()
+                max_samples = float(raw_samples) if raw_samples else 1.0
+
+                criterion = input(" Criterion [gini, entropy, squared_error] (Leave blank for default): ").strip()
+                if not criterion:
+                    criterion = "gini" if "classification" in str(ds_type if 'ds_type' in locals() else custom_task_type).lower() else "squared_error"
+
+                worker_params = {
+                    "max_depth": max_depth,
+                    "min_samples_split": min_samples_split,
+                    "min_samples_leaf": min_samples_leaf,
+                    "max_features": max_features,
+                    "max_samples": max_samples,
+                    "criterion": criterion
+                }
+                custom_hyperparams.append(worker_params)
+
+            # If it was homogeneous, we duplicate the configuration just entered for all workers in the JSON.
+            if strategy_type == "homogeneous":
+                custom_hyperparams = custom_hyperparams * workers
 
         # Generate a unique and descriptive Job ID
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -236,6 +263,7 @@ def main():
             payload["custom_task_type"] = custom_task_type
         if custom_hyperparams:
             payload["custom_hyperparams"] = custom_hyperparams
+            
     elif mode == 'infer':
         print("\n" + "-" * 40)
         print(f" [SEARCH] Scanning S3 for saved '{dataset}' models...")
