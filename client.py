@@ -83,54 +83,78 @@ def main():
             break
         print(" Invalid choice. Please try again.")
 
-    # DYNAMIC DATASET MENU
+    # ==========================================
+    # DATASET SELECTION (Menu vs Custom URL)
+    # ==========================================
     print("\n" + "-" * 40)
-    print(" Select Target Dataset:")
+    print(" Select Dataset Source:")
+    print("  1) Choose from predefined list (Golden Standard)")
+    print("  2) Provide a Custom S3 URL")
+
+    while True:
+        data_source_choice = input("\n Enter 1 or 2: ").strip()
+        if data_source_choice in ['1', '2']:
+            break
+        print(" Invalid choice. Please try again.")
+
+    custom_s3_url = None
     
-    available_datasets = list(DATASETS_METADATA.keys())
-    if not available_datasets:
-        print(" [ERROR] No datasets found in config metadata!")
-        sys.exit(1)
+    if data_source_choice == '1':
+        # --- PREDEFINED LIST MENU ---
+        available_datasets = list(DATASETS_METADATA.keys())
+        if not available_datasets:
+            print(" [ERROR] No datasets found in config metadata!")
+            sys.exit(1)
 
-    dataset_map = {}
+        dataset_map = {}
+        for i, ds_name in enumerate(available_datasets, start=1):
+            first_variant = list(DATASETS_METADATA[ds_name].keys())[0]
+            ds_type = DATASETS_METADATA[ds_name][first_variant]["type"]
+            print(f"  {i}) {ds_name.capitalize()} ({ds_type.capitalize()})")
+            dataset_map[str(i)] = ds_name
+            
+        while True:
+            ds_choice = input(f"\n Select dataset [1-{len(available_datasets)}]: ").strip()
+            if ds_choice in dataset_map:
+                dataset = dataset_map[ds_choice]
+                break
+            print(" Invalid dataset selection.")
 
-    # Dynamically list all datasets registered in config.json
-    for i, ds_name in enumerate(available_datasets, start=1):
-        # We get the "type" (regression/classification) from the first available variant
-        first_variant = list(DATASETS_METADATA[ds_name].keys())[0]
-        ds_type = DATASETS_METADATA[ds_name][first_variant]["type"]
-        print(f" {i}) {ds_name.capitalize()} ({ds_type.capitalize()})")
-        dataset_map[str(i)] = ds_name
+        print(f"\n Select Dataset Variant for '{dataset.upper()}':")
+        available_variants = list(DATASETS_METADATA[dataset].keys())
+        variant_map = {}
+        for i, variant_name in enumerate(available_variants, start=1):
+            print(f"  {i}) {variant_name}")
+            variant_map[str(i)] = variant_name
+
+        while True:
+            var_choice = input(f"\n Select variant [1-{len(available_variants)}]: ").strip()
+            if var_choice in variant_map:
+                dataset_variant = variant_map[var_choice]
+                break
+            print(" Invalid variant selection.")
+            
+    else:
+        # --- CUSTOM S3 URL MENU ---
+        print("\n [CUSTOM DATASET]")
+        dataset = "custom"
+        dataset_variant = "user_provided"
         
-    while True:
-        ds_choice = input(f"\n Enter a number [1-{len(available_datasets)}]: ").strip()
-        if ds_choice in dataset_map:
-            dataset = dataset_map[ds_choice]
-            break
-        print(" Invalid dataset selection.")
-
-    # ==========================================
-    # DYNAMIC VARIANT SELECTION
-    # ==========================================
-    print("\n" + "-" * 40)
-    print(f" Select Dataset Variant for '{dataset.upper()}':")
-
-    # Retrieves all dynamically discovered variants on S3 for this dataset
-    available_variants = list(DATASETS_METADATA[dataset].keys())
-    variant_map = {}
-
-    for i, variant_name in enumerate(available_variants, start=1):
-        print(f" {i}) {variant_name}")
-        variant_map[str(i)] = variant_name
-
-    while True:
-        var_choice = input(f"\n Enter a number [1-{len(available_variants)}]: ").strip()
-        if var_choice in variant_map:
-            dataset_variant = variant_map[var_choice]
-            break
-        print(" Invalid variant selection.")
-
-
+        while True:
+            custom_s3_url = input(" Enter the full S3 URL of the dataset (e.g., s3://my-bucket/data.csv): ").strip()
+            if custom_s3_url.startswith("s3://") and custom_s3_url.endswith(".csv"):
+                break
+            print(" Invalid format. Must start with 's3://' and end with '.csv'.")
+            
+        print("\n Specify the ML Task Type for this dataset:")
+        print("  1) Classification")
+        print("  2) Regression")
+        while True:
+            task_choice = input(" Enter 1 or 2: ").strip()
+            if task_choice in ['1', '2']:
+                custom_task_type = "classification" if task_choice == '1' else "regression"
+                break
+            print(" Invalid choice.")
 
     if mode == 'train':
         print("\n" + "-" * 40)
