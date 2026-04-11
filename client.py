@@ -83,83 +83,58 @@ def main():
             break
         print(" Invalid choice. Please try again.")
 
+    # DYNAMIC DATASET MENU
+    print("\n" + "-" * 40)
+    print(" Select Target Dataset:")
+    
+    available_datasets = list(DATASETS_METADATA.keys())
+    if not available_datasets:
+        print(" [ERROR] No datasets found in config metadata!")
+        sys.exit(1)
+
+    dataset_map = {}
+
+    # Dynamically list all datasets registered in config.json
+    for i, ds_name in enumerate(available_datasets, start=1):
+        # We get the "type" (regression/classification) from the first available variant
+        first_variant = list(DATASETS_METADATA[ds_name].keys())[0]
+        ds_type = DATASETS_METADATA[ds_name][first_variant]["type"]
+        print(f" {i}) {ds_name.capitalize()} ({ds_type.capitalize()})")
+        dataset_map[str(i)] = ds_name
+        
+    while True:
+        ds_choice = input(f"\n Enter a number [1-{len(available_datasets)}]: ").strip()
+        if ds_choice in dataset_map:
+            dataset = dataset_map[ds_choice]
+            break
+        print(" Invalid dataset selection.")
+
     # ==========================================
-    # DATASET SELECTION (Menu vs Custom URL)
+    # DYNAMIC VARIANT SELECTION
     # ==========================================
     print("\n" + "-" * 40)
-    print(" Select Dataset Source:")
-    print("  1) Choose from predefined list (Golden Standard)")
-    print("  2) Provide a Custom S3 URL")
+    print(f" Select Dataset Variant for '{dataset.upper()}':")
+
+    # Retrieves all dynamically discovered variants on S3 for this dataset
+    available_variants = list(DATASETS_METADATA[dataset].keys())
+    variant_map = {}
+
+    for i, variant_name in enumerate(available_variants, start=1):
+        print(f" {i}) {variant_name}")
+        variant_map[str(i)] = variant_name
 
     while True:
-        data_source_choice = input("\n Enter 1 or 2: ").strip()
-        if data_source_choice in ['1', '2']:
+        var_choice = input(f"\n Enter a number [1-{len(available_variants)}]: ").strip()
+        if var_choice in variant_map:
+            dataset_variant = variant_map[var_choice]
             break
-        print(" Invalid choice. Please try again.")
+        print(" Invalid variant selection.")
 
-    custom_s3_url = None
-    custom_task_type = None
-    
-    if data_source_choice == '1':
-        # --- PREDEFINED LIST MENU ---
-        available_datasets = list(DATASETS_METADATA.keys())
-        if not available_datasets:
-            print(" [ERROR] No datasets found in config metadata!")
-            sys.exit(1)
 
-        dataset_map = {}
-        for i, ds_name in enumerate(available_datasets, start=1):
-            first_variant = list(DATASETS_METADATA[ds_name].keys())[0]
-            ds_type = DATASETS_METADATA[ds_name][first_variant]["type"]
-            print(f"  {i}) {ds_name.capitalize()} ({ds_type.capitalize()})")
-            dataset_map[str(i)] = ds_name
-            
-        while True:
-            ds_choice = input(f"\n Select dataset [1-{len(available_datasets)}]: ").strip()
-            if ds_choice in dataset_map:
-                dataset = dataset_map[ds_choice]
-                break
-            print(" Invalid dataset selection.")
-
-        print(f"\n Select Dataset Variant for '{dataset.upper()}':")
-        available_variants = list(DATASETS_METADATA[dataset].keys())
-        variant_map = {}
-        for i, variant_name in enumerate(available_variants, start=1):
-            print(f"  {i}) {variant_name}")
-            variant_map[str(i)] = variant_name
-
-        while True:
-            var_choice = input(f"\n Select variant [1-{len(available_variants)}]: ").strip()
-            if var_choice in variant_map:
-                dataset_variant = variant_map[var_choice]
-                break
-            print(" Invalid variant selection.")
-            
-    else:
-        # --- CUSTOM S3 URL MENU ---
-        print("\n [CUSTOM DATASET]")
-        dataset = "custom"
-        dataset_variant = "user_provided"
-        
-        while True:
-            custom_s3_url = input(" Enter the full S3 URL of the dataset (e.g., s3://my-bucket/data.csv): ").strip()
-            if custom_s3_url.startswith("s3://") and custom_s3_url.endswith(".csv"):
-                break
-            print(" Invalid format. Must start with 's3://' and end with '.csv'.")
-            
-        print("\n Specify the ML Task Type for this dataset:")
-        print("  1) Classification")
-        print("  2) Regression")
-        while True:
-            task_choice = input(" Enter 1 or 2: ").strip()
-            if task_choice in ['1', '2']:
-                custom_task_type = "classification" if task_choice == '1' else "regression"
-                break
-            print(" Invalid choice.")
 
     if mode == 'train':
         print("\n" + "-" * 40)
-        print(f"  Cluster Configuration for: {dataset.upper()}({dataset_variant})")
+        print(f"  Hyperparameter Configuration for: {dataset.upper()}({dataset_variant})")
         
         while True:
             try:
@@ -171,80 +146,21 @@ def main():
             except ValueError:
                 print(" Invalid input. Please enter integers only.")
 
+        # AGGIUNTA: Scelta della Strategia (Homogeneous vs Heterogeneous)
         print("\n Select Training Strategy:")
         print("  1) Homogeneous  [Same parameters for all workers]")
         print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
+
         while True:
             strat_choice = input(" Enter 1 or 2: ").strip()
             if strat_choice in ['1', '2']:
                 strategy_type = "homogeneous" if strat_choice == '1' else "heterogeneous"
                 break
-            print(" Invalid choice.")
-
-        print("\n Select Hyperparameter Source:")
-        print("  1) Golden Standard (Auto-optimized per dataset)")
-        print("  2) Manual Configuration")
-        
-        while True:
-            hyper_source = input(" Enter 1 or 2: ").strip()
-            if hyper_source in ['1', '2']:
-                break
-            print(" Invalid choice.")
-
-        custom_hyperparams = None
-        
-        if hyper_source == '2':
-            print("\n [MANUAL HYPERPARAMETERS CONFIGURATION]")
-            custom_hyperparams = []
-            
-            # If homogeneous, we ask for the parameters only once. If heterogeneous, we iterate for each worker
-            iterations = 1 if strategy_type == "homogeneous" else workers
-            
-            for w in range(iterations):
-                if strategy_type == "heterogeneous":
-                    print(f"\n --- Configuring Worker {w+1}/{workers} ---")
-                else:
-                    print("\n --- Configuring Global Parameters ---")
-                    
-                raw_depth = input(" Max Depth (int, or blank for None): ").strip()
-                max_depth = int(raw_depth) if raw_depth.isdigit() else None
-                
-                raw_split = input(" Min Samples Split (int, default: 2): ").strip()
-                min_samples_split = int(raw_split) if raw_split.isdigit() else 2
-                
-                raw_leaf = input(" Min Samples Leaf (int, default: 1): ").strip()
-                min_samples_leaf = int(raw_leaf) if raw_leaf.isdigit() else 1
-
-                raw_features = input(" Max Features [sqrt, log2, float] (Default: sqrt): ").strip()
-                max_features = raw_features if raw_features else "sqrt"
-                try:
-                    max_features = float(max_features)
-                except ValueError:
-                    pass # Maintains strings like 'sqrt'
-                    
-                raw_samples = input(" Max Samples per Tree [0.0 - 1.0] (Default: 1.0): ").strip()
-                max_samples = float(raw_samples) if raw_samples else 1.0
-
-                criterion = input(" Criterion [gini, entropy, squared_error] (Leave blank for default): ").strip()
-                if not criterion:
-                    criterion = "gini" if "classification" in str(ds_type if 'ds_type' in locals() else custom_task_type).lower() else "squared_error"
-
-                worker_params = {
-                    "max_depth": max_depth,
-                    "min_samples_split": min_samples_split,
-                    "min_samples_leaf": min_samples_leaf,
-                    "max_features": max_features,
-                    "max_samples": max_samples,
-                    "criterion": criterion
-                }
-                custom_hyperparams.append(worker_params)
-
-            # If it was homogeneous, we duplicate the configuration just entered for all workers in the JSON.
-            if strategy_type == "homogeneous":
-                custom_hyperparams = custom_hyperparams * workers
+            print(" Invalid choice. Please enter 1 or 2.")
 
         # Generate a unique and descriptive Job ID
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Ex: job_taxi_1M_100trees_4workers_homogeneous_20260328_180000
         job_id = f"job_{dataset}_{dataset_variant}_{trees}trees_{workers}workers_{strategy_type}_{timestamp}"
         
         payload = {
@@ -257,14 +173,7 @@ def main():
             "strategy": strategy_type,
             "client_start_time": time.time()
         }
-        
-        # Inject custom fields if provided
-        if custom_s3_url:
-            payload["custom_s3_url"] = custom_s3_url
-            payload["custom_task_type"] = custom_task_type
-        if custom_hyperparams:
-            payload["custom_hyperparams"] = custom_hyperparams
-            
+
     elif mode == 'infer':
         print("\n" + "-" * 40)
         print(f" [SEARCH] Scanning S3 for saved '{dataset}' models...")
@@ -339,11 +248,8 @@ def main():
             except ValueError:
                 print(" Please enter a valid number.")
 
-        # Retrieve the file path from the config or use custom url
-        if dataset == "custom":
-            dataset_s3_key = custom_s3_url.replace(f"s3://{S3_BUCKET}/", "")
-        else:
-            dataset_s3_key = DATASETS_METADATA[dataset][dataset_variant]["test_path"]
+        # Retrieve the file path from the config
+        dataset_s3_key = DATASETS_METADATA[dataset][dataset_variant]["test_path"]
 
         # Dynamically retrieve feature names
         feature_names = get_feature_names_from_s3(s3_client, S3_BUCKET, dataset_s3_key, target_column="Label")
