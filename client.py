@@ -158,7 +158,7 @@ def main():
 
     if mode == 'train':
         print("\n" + "-" * 40)
-        print(f"  Hyperparameter Configuration for: {dataset.upper()}({dataset_variant})")
+        print(f"  Cluster Configuration for: {dataset.upper()}({dataset_variant})")
         
         while True:
             try:
@@ -170,21 +170,53 @@ def main():
             except ValueError:
                 print(" Invalid input. Please enter integers only.")
 
-        # AGGIUNTA: Scelta della Strategia (Homogeneous vs Heterogeneous)
-        print("\n Select Training Strategy:")
-        print("  1) Homogeneous  [Same parameters for all workers]")
-        print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
-
+        print("\n Select Hyperparameter Source:")
+        print("  1) Golden Standard (Auto-optimized per dataset)")
+        print("  2) Manual Configuration")
+        
         while True:
-            strat_choice = input(" Enter 1 or 2: ").strip()
-            if strat_choice in ['1', '2']:
-                strategy_type = "homogeneous" if strat_choice == '1' else "heterogeneous"
+            hyper_source = input(" Enter 1 or 2: ").strip()
+            if hyper_source in ['1', '2']:
                 break
-            print(" Invalid choice. Please enter 1 or 2.")
+            print(" Invalid choice.")
+
+        custom_hyperparams = None
+        
+        if hyper_source == '1':
+            print("\n Select Training Strategy:")
+            print("  1) Homogeneous  [Same parameters for all workers]")
+            print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
+            while True:
+                strat_choice = input(" Enter 1 or 2: ").strip()
+                if strat_choice in ['1', '2']:
+                    strategy_type = "homogeneous" if strat_choice == '1' else "heterogeneous"
+                    break
+                print(" Invalid choice.")
+        else:
+            print("\n [MANUAL HYPERPARAMETERS]")
+            strategy_type = "manual"
+            
+            raw_depth = input(" Max Depth (Leave blank for None): ").strip()
+            max_depth = int(raw_depth) if raw_depth.isdigit() else None
+            
+            raw_features = input(" Max Features [sqrt, log2, float] (Default: sqrt): ").strip()
+            max_features = raw_features if raw_features else "sqrt"
+            try:
+                max_features = float(max_features)
+            except ValueError:
+                pass # Keeps it as string like "sqrt" or "log2"
+                
+            raw_samples = input(" Max Samples per Tree [0.0 - 1.0] (Default: 1.0): ").strip()
+            max_samples = float(raw_samples) if raw_samples else 1.0
+            
+            custom_hyperparams = {
+                "max_depth": max_depth,
+                "max_features": max_features,
+                "max_samples": max_samples
+            }
 
         # Generate a unique and descriptive Job ID
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Ex: job_taxi_1M_100trees_4workers_homogeneous_20260328_180000
         job_id = f"job_{dataset}_{dataset_variant}_{trees}trees_{workers}workers_{strategy_type}_{timestamp}"
         
         payload = {
@@ -197,7 +229,13 @@ def main():
             "strategy": strategy_type,
             "client_start_time": time.time()
         }
-
+        
+        # Inject custom fields if provided
+        if custom_s3_url:
+            payload["custom_s3_url"] = custom_s3_url
+            payload["custom_task_type"] = custom_task_type
+        if custom_hyperparams:
+            payload["custom_hyperparams"] = custom_hyperparams
     elif mode == 'infer':
         print("\n" + "-" * 40)
         print(f" [SEARCH] Scanning S3 for saved '{dataset}' models...")
