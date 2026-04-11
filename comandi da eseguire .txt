@@ -1,0 +1,104 @@
+############################## Modificare codice e mettere up su GitHub e Docker  ##################################
+
+# Modificare il codice da GitHub
+
+# Scaricare il .zip del progetto
+
+# Impacchetta facendo nel terminale della cartella del progetto:
+docker build --platform linux/amd64 -t emarusso/distributed-rf:latest .
+
+# Effettuare il login docker
+docker login
+
+# Spedire online l'immagine
+docker push emarusso/distributed-rf:latest
+
+
+############################## Runnare codice  ##################################
+######### Master ###########
+
+# Connessione SSH
+ssh -i "distributed-random-forest-key.pem" ubuntu@ip_pubblico
+
+
+### ESEGUIRE SU ISTANZE NUOVE ###
+
+sudo apt-get update -y
+sudo apt-get install docker.io -y
+
+sudo systemctl start docker
+sudo systemctl enable docker
+
+sudo docker pull emarusso/distributed-rf:latest
+sudo docker run -d \ --name master-node \ --restart always \ emarusso/distributed-rf:latest \ python -u src/master.py
+
+
+## ESEGUIRE SU ISTANZE GIA' PRESENTI ##
+
+sudo docker pull emarusso/distributed-rf:latest
+
+sudo docker rm -f master-node || true
+
+sudo docker run -d \
+  --name master-node \
+  -v ~/.aws:/root/.aws \
+  --restart always \
+  emarusso/distributed-rf:latest \
+  python -u src/master.py
+
+
+### Visualizzare log master
+sudo docker logs -f master-node
+
+### Terminare container
+sudo docker rm -f master-node
+
+
+######### Worker ###########
+
+L'istanza si avvierà automaticamente con ASG
+
+# Connessione SSH
+ssh -i "distributed-random-forest-key.pem" ec2-user@ip pubblico
+
+# Verificare che Docker sia up, lo puoi controllare con:
+sudo docker ps
+
+# Una volta online, per visualizzare il log del worker eseguire
+sudo docker logs -f worker-node
+
+Per terminare container:
+sudo docker rm -f worker-node
+
+
+######### Client ###########
+Seguire passo passo quanto richiesto dall'interfaccia iterativa
+
+
+
+### BASELINE ###
+# Modificare il codice da GitHub
+
+# Scaricare il .zip del progetto
+
+# Impacchetta facendo nel terminale della cartella del progetto:
+docker build --platform linux/amd64 -t emarusso/distributed-rf:latest .
+
+# Effettuare il login docker
+docker login
+
+# Spedire online l'immagine
+docker push emarusso/distributed-rf:latest
+
+# Connessione SSH
+ssh -i "distributed-random-forest-key.pem" ec2-user@
+
+## ESEGUIRE SU ISTANZE GIA' PRESENTI ##
+sudo docker pull emarusso/distributed-rf:latest
+
+sudo docker rm -f baseline-node || true
+
+sudo docker run -d --name baseline-node --restart always emarusso/distributed-rf:latest python -u baseline.py
+
+### Visualizzare log master
+sudo docker logs -f baseline-node
