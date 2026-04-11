@@ -98,6 +98,7 @@ def main():
         print(" Invalid choice. Please try again.")
 
     custom_s3_url = None
+    custom_task_type = None
     
     if data_source_choice == '1':
         # --- PREDEFINED LIST MENU ---
@@ -338,8 +339,11 @@ def main():
             except ValueError:
                 print(" Please enter a valid number.")
 
-        # Retrieve the file path from the config
-        dataset_s3_key = DATASETS_METADATA[dataset][dataset_variant]["test_path"]
+        # Retrieve the file path from the config or use custom url
+        if dataset == "custom":
+            dataset_s3_key = custom_s3_url.replace(f"s3://{S3_BUCKET}/", "")
+        else:
+            dataset_s3_key = DATASETS_METADATA[dataset][dataset_variant]["test_path"]
 
         # Dynamically retrieve feature names
         feature_names = get_feature_names_from_s3(s3_client, S3_BUCKET, dataset_s3_key, target_column="Label")
