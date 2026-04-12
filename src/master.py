@@ -282,88 +282,55 @@ def check_s3_file_exists(bucket, key):
 # Calculates dataset splits based on total rows and generates SQS payloads for worker nodes.
 def generate_initial_training_tasks(job_data, total_rows=None):
     config = load_config()
-    # Get job details
     num_workers = job_data['num_workers']
     num_trees_total = job_data['num_trees']
     dataset = job_data['dataset']
     dataset_variant = job_data.get('dataset_variant', '1M')
     job_id = job_data['job_id']
     strategy = job_data.get('strategy', 'homogeneous')
-
     target_bucket = config.get("s3_bucket", "distributed-random-forest-bkt")
 
-    # Retrieving metadata for dataset variant
-    metadata = config['datasets_metadata'].get(dataset, {}).get(dataset_variant)
-    if not metadata:
-        print(f" [INFO CRITICAL] Dataset variant '{dataset_variant}' not found for '{dataset}'. Aborting.")
-        return
-
-    train_s3_key = metadata['train_path']
-    train_s3_uri = f"s3://{target_bucket}/{train_s3_key}"
-
-    # Count the number of rows: Use the provided parameter or perform an S3 query.
-    if total_rows is None:
-        try:
-            print(" [INFO] Total rows missing in cache. Triggering S3 Select fallback...")
-            total_rows = get_total_rows_s3_select(target_bucket, train_s3_key)
-        except Exception:
-            print(" [INFO CRITICAL] S3 Select fallback failed. Aborting.")
+    if dataset == "custom":
+        _, train_s3_key = parse_s3_uri(job_data['custom_s3_url'])
+        train_s3_uri = job_data['custom_s3_url']
+        task_type = job_data.get('custom_task_type', 'classification')
+        target_strategies = job_data.get('custom_hyperparams', [])
+        if not target_strategies:
+            # Fallback se non ci sono iperparametri
+            target_strategies = [{"max_depth": None, "max_features": "sqrt", "criterion": "gini" if task_type == 'classification' else 'squared_error'}] * num_workers
+    else:
+        metadata = config['datasets_metadata'].get(dataset, {}).get(dataset_variant)
+        if not metadata:
+            print(f" [INFO CRITICAL] Dataset variant '{dataset_variant}' not found for '{dataset}'. Aborting.")
             return
 
+        train_s3_key = metadata['train_path']
+        train_s3_uri = f"s3://{target_bucket}/{train_s3_key}"
 
-    # Calculating single worker task data
+        root_dir = config.get('_root_dir', '.')
+        strategies_path = os.path.join(root_dir, 'config', f'{strategy}_tasks.json')
+        
+        try:
+            with open(strategies_path, 'r') as f: all_strategies = json.load(f)
+        except FileNotFoundError:
+            all_strategies = {}
+
+        ml_handler = ModelFactory.get_model(dataset)
+        task_type = getattr(ml_handler, 'task_type', 'classification')
+
+        if strategy == "homogeneous":
+            conf = all_strategies.get(dataset, {}).get(str(num_trees_total))
+            target_strategies = [conf] * num_workers if conf else []
+        else:
+            target_strategies = all_strategies.get(dataset, {}).get(str(num_workers), [])
+
+        if not target_strategies:
+            target_strategies = [{"max_depth": None, "max_features": "sqrt", "criterion": "gini" if task_type == 'classification' else 'squared_error'}] * num_workers
+
     rows_per_worker = total_rows // num_workers
     remainder_rows = total_rows % num_workers
-
     trees_per_worker = math.floor(num_trees_total / num_workers)
     trees_remainder = num_trees_total % num_workers
-
-    root_dir = config.get('_root_dir', '.')
-
-    strategies_path = os.path.join(root_dir, 'config', 'homogeneous_tasks.json')
-    if(strategy == "homogeneous"):
-        strategies_path = os.path.join(root_dir, 'config', 'homogeneous_tasks.json')
-    else:
-        strategies_path = os.path.join(root_dir, 'config', 'heterogeneous_tasks.json')
-    
-    try:
-        with open(strategies_path, 'r') as f:
-            all_strategies = json.load(f)
-    except FileNotFoundError:
-        print(f" [INFO ERROR] Missing strategies file: {strategies_path}")
-        all_strategies = {}
-
-    # Determine whether the dataset is for classification or regression
-    ml_handler = ModelFactory.get_model(dataset)
-    task_type = getattr(ml_handler, 'task_type', 'classification')
-
-    target_strategies = []
-
-    if strategy == "homogeneous":
-        # Look for dataset, number of trees, in the specified configuration file
-        dataset_params = all_strategies.get(dataset, {})
-        conf = dataset_params.get(str(num_trees_total))
-
-        if conf:
-            # Generate same strategy for all workers
-            target_strategies = [conf] * num_workers
-        else:
-            print(f" [INFO WARNING] No Gold Standard for {dataset} with {num_trees_total} trees.")
-
-    else:
-        # Look for
-        dataset_params = all_strategies.get(dataset, {})
-
-        # Get the strategy for the specified number of workers
-        target_strategies = dataset_params.get(str(num_workers), [])
-
-    if not target_strategies:
-        print(f" [INFO WARNING] Using fallback params.")
-        fallback_conf = {"max_depth": None, "max_features": "sqrt",
-                         "criterion": "gini" if dataset == "airlines" else "squared_error"}
-        target_strategies = [fallback_conf] * num_workers
-
-
     current_skip = 0
     
     """
@@ -380,7 +347,6 @@ def generate_initial_training_tasks(job_data, total_rows=None):
     # ==========================================================
     """
 
-    
     print(f" [INFO] Distributing {num_trees_total} trees across {num_workers} training tasks...")
     for i in range(num_workers):
         trees = trees_per_worker + (1 if i < trees_remainder else 0)
@@ -437,7 +403,10 @@ def generate_initial_training_tasks(job_data, total_rows=None):
             "min_samples_leaf": conf.get('min_samples_leaf', 1),
             "max_samples": max_samples,
             "class_weight": conf.get('class_weight', None),
-            "n_jobs": conf.get('n_jobs', -1)
+            "n_jobs": conf.get('n_jobs', -1),
+            "is_custom": dataset == "custom",
+            "custom_target_col": job_data.get("custom_target_col"),
+            "task_type": task_type
         }
 
         current_skip += n_rows
@@ -459,15 +428,23 @@ def generate_initial_training_tasks(job_data, total_rows=None):
         
 
 # Enqueues inference tasks mapped to completed training chunks
-def generate_inference_tasks(job_id, train_resp, dataset, dataset_variant):
-    # Get train task details
+def generate_inference_tasks(job_data, train_resp):
+    job_id = job_data['job_id']
+    dataset = job_data['dataset']
+    dataset_variant = job_data.get('dataset_variant', '1M')
+    
     task_id = train_resp['task_id']
     model_s3_uri = train_resp['s3_model_uri']
 
     config = load_config()
-    target_bucket = config.get("s3_bucket", "distributed-random-forest-bkt")
-    test_s3_key = config['datasets_metadata'][dataset][dataset_variant]['test_path']
-    test_s3_uri = f"s3://{target_bucket}/{test_s3_key}"
+    
+    if dataset == "custom":
+        # If it's custom, the test URL is the one manually provided by the user
+        test_s3_uri = job_data.get('custom_s3_url')
+    else:
+        target_bucket = config.get("s3_bucket", "distributed-random-forest-bkt")
+        test_s3_key = config['datasets_metadata'][dataset][dataset_variant]['test_path']
+        test_s3_uri = f"s3://{target_bucket}/{test_s3_key}"
 
     infer_task = {
         "job_id": job_id,
@@ -538,30 +515,26 @@ def save_metrics(dataset, dataset_variant, n_workers, n_trees, strategy_name, tr
     print(f" [METRICS] Results securely appended to: s3://{target_bucket}/{s3_key}")
 
 
-# Downloads partial inferences, executes majority vote/averaging, and calculates global metrics.
-def aggregate_and_evaluate(job_id, dataset_name, dataset_variant, s3_inference_results, num_workers, trees, weights, train_time, infer_time, strategy):
+# Downloads partial inferences, executes majority vote/averaging, and calculates global metrics
+def aggregate_and_evaluate(job_data, job_id, dataset_name, dataset_variant, s3_inference_results, num_workers, trees, weights, train_time, infer_time, strategy):
     print("\n" + "=" * 50)
     print(" FINAL AGGREGATION & EVALUATION PHASE")
     print("=" * 50)
     
-    """ 
-    # ==========================================================
-    # TEST 2.4 (MASTER CRASH DURING FINAL AGGREGATION)
-    # ==========================================================
-    print("\n" + "!"*50)
-    print(" [TEST 2.4] CRITICAL PHASE: ALL WORKERS HAVE COMPLETED")
-    print(" [TEST 2.4] You have 15 seconds to kill the Master")
-    print("!"*50 + "\n")
-    time.sleep(15)
-    # ==========================================================
-    """
-
-
-    ml_handler = ModelFactory.get_model(dataset_name)
-    task_type = getattr(ml_handler, 'task_type', 'classification')
-
     s3 = boto3.client('s3')
     config = load_config()
+
+    # GESTIONE DATASET CUSTOM VS GOLDEN STANDARD 
+    if dataset_name == "custom":
+        task_type = job_data.get('custom_task_type', 'classification')
+        target_col = job_data.get('custom_target_col', 'Label')
+        test_s3_uri = job_data.get('custom_s3_url')
+    else:
+        ml_handler = ModelFactory.get_model(dataset_name)
+        task_type = getattr(ml_handler, 'task_type', 'classification')
+        target_col = ml_handler.target_column
+        test_s3_key = config['datasets_metadata'][dataset_name][dataset_variant]['test_path']
+        test_s3_uri = f"s3://{config.get('s3_bucket')}/{test_s3_key}"
 
     # Download all the .npy files from the workers
     predictions_list = []
@@ -577,33 +550,45 @@ def aggregate_and_evaluate(job_id, dataset_name, dataset_variant, s3_inference_r
         os.remove(local_path)
 
     # Downloads the real values from the test set
-    target_col = ml_handler.target_column
-    test_s3_key = config['datasets_metadata'][dataset_name][dataset_variant]['test_path']
-    test_s3_uri = f"s3://{config.get('s3_bucket')}/{test_s3_key}"
-
     print(f" Reading Ground Truth from column '{target_col}'...")
-    df_test = pd.read_csv(test_s3_uri, usecols=[target_col])
-    y_true = df_test[target_col].values
+    try:
+        df_test = pd.read_csv(test_s3_uri, usecols=[target_col])
+        y_true = df_test[target_col].values
+    except Exception as e:
+        print(f" [CRITICAL ERROR] Fallito il caricamento del Test Set da {test_s3_uri}. Errore: {e}")
+        return
 
     # Aggregation
     data_shape = predictions_list[0].shape
     
-    if len(data_shape) == 2:
-        # CLASSIFICATION (The shape is N_rows * 2_columns)
+    # Usiamo task_type per essere sicuri, in combo con la shape
+    if task_type == 'classification' or len(data_shape) == 2:
         print(" [EVALUATION] Classification task detected. Executing Majority Voting...")
         total_votes = np.sum(predictions_list, axis=0)
-        votes_0 = total_votes[:, 0]
-        votes_1 = total_votes[:, 1]
         
-        y_prob = votes_1 / (votes_0 + votes_1)
-        final_prediction = np.argmax(total_votes, axis=1)
+        # Gestione sicura per binario vs multiclasse
+        if len(data_shape) == 2:
+            votes_0 = total_votes[:, 0]
+            votes_1 = total_votes[:, 1]
+            # Evitiamo divisioni per zero
+            with np.errstate(divide='ignore', invalid='ignore'):
+                y_prob = np.where((votes_0 + votes_1) == 0, 0, votes_1 / (votes_0 + votes_1))
+        else:
+            # Fallback se le probabilità non sono in 2D
+            y_prob = total_votes / num_workers
+
+        final_prediction = np.argmax(total_votes, axis=1) if len(data_shape) == 2 else np.round(total_votes / num_workers)
 
         # Calculating all evaluation metrics
-        auc = roc_auc_score(y_true, y_prob)
+        try:
+            auc = roc_auc_score(y_true, y_prob)
+        except ValueError:
+            auc = 0.0 # Se c'è una sola classe nel test set (può capitare con custom data piccoli)
+            
         acc = accuracy_score(y_true, final_prediction)
-        precision = precision_score(y_true, final_prediction, zero_division=0)
-        recall = recall_score(y_true, final_prediction, zero_division=0)
-        f1 = f1_score(y_true, final_prediction, zero_division=0)
+        precision = precision_score(y_true, final_prediction, zero_division=0, average='macro')
+        recall = recall_score(y_true, final_prediction, zero_division=0, average='macro')
+        f1 = f1_score(y_true, final_prediction, zero_division=0, average='macro')
 
         print(f"\n GLOBAL DISTRIBUTED RESULTS:")
         print(f" ROC-AUC:   {auc:.4f}")
@@ -621,7 +606,6 @@ def aggregate_and_evaluate(job_id, dataset_name, dataset_variant, s3_inference_r
         }
 
     else:
-        # REGRESSION (The shape is N_rows)
         print(" [EVALUATION] Regression task detected. Executing Weighted Averaging...")
         y_pred = np.average(predictions_list, axis=0, weights=weights)
 
@@ -785,29 +769,38 @@ def main():
                     dataset_variant = job_data.get('dataset_variant', '1M')
 
                     if not tasks_dispatched:
-                        bucket = config.get("s3_bucket")
-                        metadata = config['datasets_metadata'].get(dataset, {}).get(dataset_variant)
-
-                        if not metadata:
-                            print(f" [CRITICAL] Dataset variant '{dataset_variant}' not found. Aborting.")
-                            scale_worker_infrastructure(0)
-                            continue
-
-                        train_key = metadata['train_path']
-
-                        split_already_exists = check_s3_file_exists(bucket, train_key)
-
-                        if not split_already_exists:
+                        if dataset == "custom":
+                            print(" [PIPELINE] Custom Dataset detected. Bypassing metadata lookup.")
+                            custom_s3_url = job_data['custom_s3_url']
+                            bucket, train_key = parse_s3_uri(custom_s3_url)
                             try:
-                                print(f" [PIPELINE] Dataset split required (Exists: {split_already_exists}. Streaming...")
-                                calculated_train_rows = execute_streaming_split(dataset, dataset_variant)
+                                calculated_train_rows = get_total_rows_s3_select(bucket, train_key)
                             except Exception as e:
-                                print(f" [CRITICAL] Split execution failed: {e}")
-                                scale_worker_infrastructure(0)
+                                print(f" [CRITICAL] Failed to read custom S3 URL: {e}")
+                                #scale_worker_infrastructure(0)
                                 continue
                         else:
-                            print(
-                                " [PIPELINE] Dataset split already exists. Bypassing split to ensure test set consistency.")
+                            bucket = config.get("s3_bucket")
+                            metadata = config['datasets_metadata'].get(dataset, {}).get(dataset_variant)
+
+                            if not metadata:
+                                print(f" [CRITICAL] Dataset variant '{dataset_variant}' not found. Aborting.")
+                                #scale_worker_infrastructure(0)
+                                continue
+
+                            train_key = metadata['train_path']
+                            split_already_exists = check_s3_file_exists(bucket, train_key)
+
+                            if not split_already_exists:
+                                try:
+                                    print(f" [PIPELINE] Dataset split required. Streaming...")
+                                    calculated_train_rows = execute_streaming_split(dataset, dataset_variant)
+                                except Exception as e:
+                                    print(f" [CRITICAL] Split execution failed: {e}")
+                                    #scale_worker_infrastructure(0)
+                                    continue
+                            else:
+                                print(" [PIPELINE] Dataset split already exists. Bypassing split.")
                     else:
                         print(" [RECOVERY] Split block skipped. Tasks already dispatched.")
 
@@ -821,11 +814,10 @@ def main():
         
                     start_infer = start_train # Fallback timestamp
 
-                    # 5. POLLING EVENT LOOP
+                    # 5. POLLING EVENT LOOP (TRAINING ONLY)
                     print("\n [EVENT LOOP] Master listening actively for Worker responses...\n")
-                    while len(s3_inference_results) < num_workers:
+                    while len(completed_train_tasks) < num_workers:
                         
-                        # Train response queue
                         res_train = sqs_client.receive_message(QueueUrl=TRAIN_RESPONSE_QUEUE, MaxNumberOfMessages=10, WaitTimeSeconds=2)
                         if 'Messages' in res_train:
                             for msg in res_train['Messages']:
@@ -833,78 +825,90 @@ def main():
                                 task_id = train_resp['task_id']
         
                                 if task_id not in completed_train_tasks:
-                                    generate_inference_tasks(job_id, train_resp, dataset, dataset_variant)
                                     completed_train_tasks.add(task_id)
-                                    print(f" [ACK] Worker completed training for {task_id}.")
-                                    update_job_state(job_id, completed_train_tasks, s3_inference_results, start_train, tasks_dispatched, training_time, inference_time)
+                                    print(f" [ACK] Worker completed training for {task_id}! ({len(completed_train_tasks)}/{num_workers})")
+                                    # Update DynamoDB indicating completed task
+                                    update_job_state(job_id, completed_train_tasks, {}, start_train, tasks_dispatched, 0.0, 0.0)
         
                                 sqs_client.delete_message(QueueUrl=TRAIN_RESPONSE_QUEUE, ReceiptHandle=msg['ReceiptHandle'])
+                    
+                    # Save the final training time on DynamoDB
+                    training_time = time.time() - start_train
+                    update_job_state(job_id, completed_train_tasks, {}, start_train, tasks_dispatched, training_time, 0.0)
+                    
+                    print("\n [PIPELINE] All Workers completed their Training tasks!")
+                    
+                    # Comment for continous test, decomment to turn off the instances
+                    # scale_worker_infrastructure(0) 
+                    
+                    total_run_time = time.time() - total_start_time
+                    print(f" [TIMERS] Distributed Training completed in {total_run_time:.2f}s")
+                    
+                    # REQUEST-REPLY: Invia l'ID del modello appena addestrato al Client!
+                    client_response_queue = config["sqs_queues"].get("client_response")
+                    if client_response_queue:
+                        response_payload = {
+                            "job_id": job_id, "target_model": job_id,
+                            "total_time_sec": round(total_run_time, 2)
+                        }
+                        sqs_client.send_message(QueueUrl=client_response_queue, MessageBody=json.dumps(response_payload))
                         
-                        # Timer switch: Train to Inference
-                        if len(completed_train_tasks) == num_workers and training_time == 0.0:
-                            training_time = time.time() - start_train
-                            start_infer = time.time() 
-                            update_job_state(job_id, completed_train_tasks, s3_inference_results, start_train, tasks_dispatched, training_time, inference_time)
-        
-                        # Inference response queue
+                # BRANCH C: BULK INFERENCE
+                elif mode == 'bulk_infer':
+                    total_start_time = job_data.get('client_start_time', time.time())
+                    target_model = job_data['target_model']
+                    dataset_variant = job_data.get('dataset_variant', '1M')
+                    
+                    bucket = load_config().get("s3_bucket")
+                    model_s3_uris = count_model_parts(bucket, dataset, target_model)
+                    num_workers = len(model_s3_uris)
+                    
+                    print(f" [BULK-INFER] Target model '{target_model}' chunked into {num_workers} parts. Scaling workers...")
+                    scale_worker_infrastructure(num_workers)
+                    
+                    # 1. State recovery (we only retrieve already completed inferences)
+                    _, s3_inference_results, _, _, _, inference_time = get_job_state(target_model)
+                    start_infer = time.time()
+                    
+                    # 2. Fan-out of bulk inference tasks
+                    for i, uri in enumerate(model_s3_uris):
+                        task_id = f"task_{i+1}"
+                        if task_id not in s3_inference_results:
+                            train_resp_mock = {"task_id": task_id, "s3_model_uri": uri}
+                            generate_inference_tasks(job_data, train_resp_mock)
+                            
+                    # 3. Polling for bulk results
+                    while len(s3_inference_results) < num_workers:
                         res_infer = sqs_client.receive_message(QueueUrl=INFER_RESPONSE_QUEUE, MaxNumberOfMessages=10, WaitTimeSeconds=2)
                         if 'Messages' in res_infer:
                             for msg in res_infer['Messages']:
-                            
-                                """
-                                # ==========================================================
-                                # TEST 2.3 (MASTER CRASH ON INFERENCE ACK)
-                                # ==========================================================
-                                print("\n" + "!"*50)
-                                print(" [TEST 2.3] INFERENCE ACK RETRIEVED FROM THE QUEUE")
-                                print(" [TEST 2.3] You have 15 seconds to kill the Master before it deletes the message")
-                                print("!"*50 + "\n")
-                                time.sleep(15)
-                                # ========================================================== 
-                                """
-
                                 body = json.loads(msg['Body'])
                                 task_id = body['task_id']
-                                
-                                s3_votes_data = body['s3_voti_uri']
-                                s3_votes_uri = s3_votes_data['valore'] if isinstance(s3_votes_data, dict) else s3_votes_data
+                                s3_votes_uri = body['s3_voti_uri']['valore'] if isinstance(body['s3_voti_uri'], dict) else body['s3_voti_uri']
                                 
                                 if task_id not in s3_inference_results:
                                     s3_inference_results[task_id] = s3_votes_uri
-                                    print(f" [ACK] Worker completed inference for {task_id}! ({len(s3_inference_results)}/{num_workers})")
-
-                                    # Halt inference timer if phase complete
-                                    if len(s3_inference_results) == num_workers and inference_time == 0.0:
-                                        inference_time = time.time() - start_infer
-
-                                    update_job_state(job_id, completed_train_tasks, s3_inference_results, start_train, tasks_dispatched, training_time, inference_time)
-        
+                                    print(f" [ACK] Worker completed Bulk Inference for {task_id}! ({len(s3_inference_results)}/{num_workers})")
+                                    update_job_state(target_model, set(s3_inference_results.keys()), s3_inference_results, start_infer, True, 0.0, time.time() - start_infer)
+                                    
                                 sqs_client.delete_message(QueueUrl=INFER_RESPONSE_QUEUE, ReceiptHandle=msg['ReceiptHandle'])
-        
-                    # 6. FINAL AGGREGATION
-                    if training_time == 0.0:
-                        training_time = time.time() - start_train
-                    if inference_time == 0.0:
-                        inference_time = time.time() - total_start_time
-                        
-                    print("\n [PIPELINE] All Workers completed their end-to-end tasks!")
-                    #commenta riga sotto per test veloci
-                    #scale_worker_infrastructure(0)
                     
+                    # 4. Final aggregation
+                    inference_time = time.time() - start_infer
                     total_run_time = time.time() - total_start_time
-        
-                    try:
-                        weights = []
-                        trees_per_worker = math.floor(job_data['num_trees'] / num_workers)
-                        trees_remainder = job_data['num_trees'] % num_workers
-                        for i in range(num_workers):
-                            weights.append(trees_per_worker + (1 if i < trees_remainder else 0))
+                    
+                    # Retrieve num_trees from the model name
+                    try: num_trees = int(target_model.split('_')[3].replace('trees', ''))
+                    except: num_trees = num_workers * 10 
+                    
+                    weights = [math.floor(num_trees / num_workers) + (1 if i < (num_trees % num_workers) else 0) for i in range(num_workers)]
+                    strat = "homogeneous" if "homogeneous" in target_model else "heterogeneous"
+                    
+                    aggregate_and_evaluate(job_data, job_id, dataset, dataset_variant, s3_inference_results, num_workers, num_trees, weights, 0.0, inference_time, strat)
 
-                        aggregate_and_evaluate(job_id, dataset, dataset_variant, s3_inference_results, num_workers, job_data['num_trees'], weights, training_time, inference_time, job_data.get('strategy', 'homogeneous'))
-                    except Exception as e:
-                        print(f" [EVALUATION ERROR] Final aggregation failed: {e}")
-                        
-                    print(f" [TIMERS] Train: {training_time:.2f}s | Infer: {inference_time:.2f}s | Global: {total_run_time:.2f}s")
+                    client_response_queue = config["sqs_queues"].get("client_response")
+                    if client_response_queue:
+                        sqs_client.send_message(QueueUrl=client_response_queue, MessageBody=json.dumps({"job_id": job_id, "mode": "bulk_infer", "total_time_sec": round(total_run_time, 2)}))
 
 
                 # BRANCH B: REAL-TIME SINGLE INFERENCE 
@@ -937,15 +941,17 @@ def main():
                         }
                         sqs_client.send_message(QueueUrl=INFER_TASK_QUEUE, MessageBody=json.dumps(infer_task))
 
+                    """
                     # ==========================================================
-                    # START INJECTION FOR TEST 3.3 (MASTER CRASH IN INFERENCE REAL-TIME)
+                    # TEST 3.3 (MASTER CRASH IN INFERENCE REAL-TIME)
                     # ==========================================================
                     print("\n" + "!"*50)
-                    print(" [TEST 3.2] TASKS SENT TO WORKERS. WAITING FOR RESPONSES...")
-                    print(" [TEST 3.2] You have 15 seconds to restart the Master!")
+                    print(" [TEST 3.3] TASKS SENT TO WORKERS. WAITING FOR RESPONSES...")
+                    print(" [TEST 3.3] You have 15 seconds to restart the Master!")
                     print("!"*50 + "\n")
                     time.sleep(15)
                     # ==========================================================
+                    """
 
                     total_received_votes = []
                     read_messages = 0
@@ -973,8 +979,13 @@ def main():
                     # scale_worker_infrastructure(0)
                     
                     # Real-Time Aggregation
-                    ml_handler = ModelFactory.get_model(dataset)
-                    if ml_handler.task_type == 'classification':
+                    if dataset == "custom":
+                        task_type = job_data.get('custom_task_type', 'classification')
+                    else:
+                        ml_handler = ModelFactory.get_model(dataset)
+                        task_type = getattr(ml_handler, 'task_type', 'classification')
+
+                    if task_type == 'classification':
                         final_prediction = max(set(total_received_votes), key=total_received_votes.count) 
                         task_str = "Classification (Majority Vote)"
                         votes_0 = total_received_votes.count(0)

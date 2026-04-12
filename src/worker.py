@@ -88,14 +88,50 @@ def train(train_task_data, receipt_handle):
             nrows=train_task_data['num_rows']
         )
 
-        ml_handler = ModelFactory.get_model(dataset_name=train_task_data['dataset'])
-
         print("Starting timer...")
         start_time = time.time()
         print("Timer started")
 
         # 2. Training
-        rf = ml_handler.process_and_train(df, train_task_data)
+        if train_task_data.get("is_custom"):
+            target_col = train_task_data.get("custom_target_col")
+            if not target_col or target_col not in df.columns:
+                raise ValueError(f"Target column '{target_col}' not found in the custom CSV dataset! Available columns: {list(df.columns)}")
+                
+            # Separate X and Y for the custom CSV
+            X = df.drop(columns=[target_col]).fillna(0) 
+            y = df[target_col]
+            
+            if train_task_data.get("task_type") == "classification":
+                from sklearn.ensemble import RandomForestClassifier
+                rf = RandomForestClassifier(
+                    n_estimators=train_task_data['trees'],
+                    max_depth=train_task_data.get('max_depth'),
+                    min_samples_split=train_task_data.get('min_samples_split', 2),
+                    min_samples_leaf=train_task_data.get('min_samples_leaf', 1),
+                    max_features=train_task_data.get('max_features', 'sqrt'),
+                    max_samples=train_task_data.get('max_samples', 1.0),
+                    criterion=train_task_data.get('criterion', 'gini'),
+                    class_weight=train_task_data.get('class_weight', None), 
+                )
+            else:
+                from sklearn.ensemble import RandomForestRegressor
+                rf = RandomForestRegressor(
+                    n_estimators=train_task_data['trees'],
+                    max_depth=train_task_data.get('max_depth'),
+                    min_samples_split=train_task_data.get('min_samples_split', 2),
+                    min_samples_leaf=train_task_data.get('min_samples_leaf', 1),
+                    max_features=train_task_data.get('max_features', 1.0),
+                    max_samples=train_task_data.get('max_samples', 1.0),
+                    criterion=train_task_data.get('criterion', 'squared_error'),
+                    n_jobs=-1
+                )
+            rf.fit(X, y)
+        else:
+            # Standard flow for Golden Standard datasets
+            ml_handler = ModelFactory.get_model(dataset_name=train_task_data['dataset'])
+            rf = ml_handler.process_and_train(df, train_task_data)
+
         print(f" [Job: {job_id} | Task: {task_id}] Training completed in {time.time() - start_time:.2f}s")
 
         # 3. Save and upload
@@ -178,6 +214,7 @@ def execute_inference(infer_task_data, receipt_handle):
             # ==========================================================
             """
             
+            """
             # ==========================================================
             # TEST 3.2 (WORKER SOFT CRASH IN SINGLE INFERENCE)
             # ==========================================================
@@ -186,7 +223,7 @@ def execute_inference(infer_task_data, receipt_handle):
                 print(" [TEST 3.2] Simulating Python exception...")
                 raise ValueError("SIMULATED SOFT CRASH: Corrupted tuple data!")
             # ==========================================================
-
+            """
 
             data_array = np.array(infer_task_data['tuple_data']).reshape(1, -1)
             all_pred = [float(tree.predict(data_array)[0]) for tree in rf.estimators_]
@@ -195,18 +232,38 @@ def execute_inference(infer_task_data, receipt_handle):
             # Note: Italian keys kept intact to preserve Master-Worker semantic contract
             return {"tipo": "singolo", "valore": all_pred}
 
+        ### DA RIVEDERE!!!
         # CASE 2: BULK INFERENCE FROM S3 (Memory-efficient chunking)
         else:
             print(f" [INFER] Bulk inference on full dataset in progress (Chunked)...")
             test_dataset_uri = infer_task_data['test_dataset_uri']
-            ml_handler = ModelFactory.get_model(dataset_name=infer_task_data['dataset'])
+            
+            if infer_task_data.get("is_custom") or infer_task_data.get("dataset") == "custom":
+                # Creiamo una finta classe "handler" al volo per non far arrabbiare il codice sotto
+                class CustomHandler:
+                    def __init__(self, target):
+                        self.target_column = target
+                    def process_and_predict(self, model, chunk):
+                        # Se la colonna target c'è nel test set, la droppiamo prima di predire
+                        if self.target_column in chunk.columns:
+                            X = chunk.drop(columns=[self.target_column]).fillna(0)
+                        else:
+                            X = chunk.fillna(0)
+                        # Facciamo la predizione facendo la media su tutti gli alberi del chunk
+                        predictions = np.array([tree.predict(X) for tree in model.estimators_])
+                        # Essendo Random Forest, prendiamo la media o la moda (qui semplifichiamo con media)
+                        return np.mean(predictions, axis=0)
+
+                target_col = infer_task_data.get("custom_target_col", "Label") # Fallback su Label
+                ml_handler = CustomHandler(target_col)
+            else:
+                ml_handler = ModelFactory.get_model(dataset_name=infer_task_data['dataset'])
 
             chunk_size = config.get("inference_chunksize", 500000)
             print(f" Calculating predictions (Chunksize: {chunk_size})...")
             start_time = time.time()
 
             all_predictions = []
-
 
             for chunk in pd.read_csv(test_dataset_uri, chunksize=chunk_size, low_memory=False):
                 # Predict on current chunk only
