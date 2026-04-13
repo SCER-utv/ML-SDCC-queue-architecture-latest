@@ -130,17 +130,23 @@ def main():
     print("=" * 60)
 
     print("\nSelect Operation Mode:")
-    print("  1)  Distributed Training")
-    print("  2)  Bulk Inference (Test Set Evaluation)")
-    print("  3)  Real-Time Inference (Single Prediction)")
-    print("  4)  Download Aggregated Model")
+    print("  1)  Distributed Training (Training Only)")
+    print("  2)  End-to-End Pipeline (Train + Auto-Evaluate)")
+    print("  3)  Bulk Inference (Test Set Evaluation)")
+    print("  4)  Real-Time Inference (Single Prediction)")
+    print("  5)  Download Aggregated Model")
     
     while True:
-        mode_choice = input("\n Enter 1, 2, 3 or 4: ").strip()
-        if mode_choice in ['1', '2', '3', '4']:
-            if mode_choice == '1': mode = 'train'
-            elif mode_choice == '2': mode = 'bulk_infer'
-            elif mode_choice == '3': mode = 'infer'
+        mode_choice = input("\n Enter 1, 2, 3, 4 or 5: ").strip()
+        if mode_choice in ['1', '2', '3', '4', '5']:
+            if mode_choice == '1':
+                mode = 'train'
+            elif mode_choice == '2':
+                mode = 'train_and_infer'
+            elif mode_choice == '3':
+                mode = 'bulk_infer'
+            elif mode_choice == '4':
+                mode = 'infer'
             else: mode = 'download'
             break
         print(" Invalid choice. Please try again.")
@@ -204,11 +210,28 @@ def main():
         dataset_variant = "user_provided"
         
         while True:
-            custom_s3_url = input(" Enter the full S3 URL of the dataset (e.g., s3://my-bucket/data.csv): ").strip()
+            if mode == 'bulk_infer':
+                custom_s3_url = input(
+                    " Enter the full S3 URL of the TEST dataset (e.g., s3://my-bucket/test_data.csv): ").strip()
+            else:
+                custom_s3_url = input(" Enter the full S3 URL of the dataset (e.g., s3://my-bucket/data.csv): ").strip()
+
             if custom_s3_url.startswith("s3://") and custom_s3_url.endswith(".csv"):
                 break
             print(" Invalid format. Must start with 's3://' and end with '.csv'.")
-            
+
+        needs_split = True  # Default di sicurezza
+        if mode in ['train', 'train_and_infer']:
+            print("\n How should the system handle this dataset?")
+            print("  1) It's a FULL dataset -> Auto-Split into Train and Test")
+            print("  2) It's already a TRAINING set -> Do not split (Use as is)")
+            while True:
+                split_choice = input(" Enter 1 or 2: ").strip()
+                if split_choice in ['1', '2']:
+                    needs_split = (split_choice == '1')
+                    break
+                print(" Invalid choice.")
+
         custom_target_col = input(" Enter the EXACT name of the Target Column to predict (e.g., Label): ").strip()
             
         print("\n Specify the ML Task Type for this dataset:")
@@ -221,7 +244,7 @@ def main():
                 break
             print(" Invalid choice.")
 
-    if mode == 'train':
+    if mode in ['train', 'train_and_infer']:
         print("\n" + "-" * 40)
         print(f"  Cluster Configuration for: {dataset.upper()}({dataset_variant})")
         
@@ -341,14 +364,15 @@ def main():
         job_id = f"job_{dataset}_{dataset_variant}_{trees}trees_{workers}workers_{strategy_type}_{timestamp}"
         
         payload = {
-            "mode": "train",
+            "mode": mode,
             "job_id": job_id,
             "dataset": dataset,
             "dataset_variant": dataset_variant,
             "num_workers": workers,
             "num_trees": trees,
             "strategy": strategy_type,
-            "client_start_time": time.time()
+            "client_start_time": time.time(),
+            "needs_split": locals().get('needs_split', True)
         }
         
         # Inject custom fields if provided
@@ -449,7 +473,7 @@ def main():
         required_features = len(feature_names) if feature_names else DATASETS_METADATA[dataset][dataset_variant]["features"]
 
         req_id = f"req_{dataset}_{dataset_variant}_{int(datetime.now().timestamp())}"
-        
+
         # ==========================================
         # SINGLE INFERENCE (Richiede input manuale)
         # ==========================================
@@ -457,41 +481,53 @@ def main():
             # 1. Trova il file S3 per capire quante/quali feature servono
             if dataset == "custom":
                 dataset_s3_key = custom_s3_url.replace(f"s3://{S3_BUCKET}/", "")
+                actual_target_col = custom_target_col  # Usiamo la colonna VERA dell'utente!
             else:
                 dataset_s3_key = DATASETS_METADATA[dataset][dataset_variant]["test_path"]
+                # Cerca la colonna nel config, se non c'è usa "Label" di default
+                actual_target_col = DATASETS_METADATA[dataset][dataset_variant].get("target_column", "Label")
 
             # 2. Estrae i nomi delle colonne
-            feature_names = get_feature_names_from_s3(s3_client, S3_BUCKET, dataset_s3_key, target_column="Label")
-            required_features = len(feature_names) if feature_names else DATASETS_METADATA[dataset][dataset_variant]["features"]
+            feature_names = get_feature_names_from_s3(s3_client, S3_BUCKET, dataset_s3_key,
+                                                      target_column=actual_target_col)
+            required_features = len(feature_names) if feature_names else (
+                DATASETS_METADATA[dataset][dataset_variant]["features"] if dataset != "custom" else 0)
 
             print("\n" + "-" * 40)
             print(" Real-Time Prediction Input")
-            print(f" WARNING: The '{dataset.upper()}' ({dataset_variant}) dataset requires EXACTLY {required_features} features!")
+            if required_features > 0:
+                print(
+                    f" WARNING: The '{dataset.upper()}' ({dataset_variant}) dataset requires EXACTLY {required_features} features!")
 
             if feature_names:
                 print(f"\n Expected layout: \n {', '.join(feature_names)}")
 
             # 3. Chiede la tupla all'utente
             while True:
-                raw_tuple = input(f" Enter {required_features} comma-separated values: ").strip()
+                prompt_text = f" Enter {required_features} comma-separated values: " if required_features > 0 else " Enter the comma-separated values: "
+                raw_tuple = input(prompt_text).strip()
                 try:
                     tuple_data = [float(x.strip()) for x in raw_tuple.split(',')]
-                    if len(tuple_data) == required_features: 
+                    if required_features == 0 or len(tuple_data) == required_features:
                         break
-                    else: 
+                    else:
                         print(f" [ERROR] Expected {required_features} values, got {len(tuple_data)}.")
                 except ValueError:
                     print(" [ERROR] Formatting error. Use numbers only (e.g., 10.5, 3).")
 
             # 4. Prepara il payload per la Single Inference
             payload = {
-                "mode": "infer", 
-                "job_id": req_id, 
+                "mode": "infer",
+                "job_id": req_id,
                 "dataset": dataset,
-                "dataset_variant": dataset_variant, 
+                "dataset_variant": dataset_variant,
                 "target_model": target_model,
                 "tuple_data": tuple_data
             }
+            # INIEZIONE FONDAMENTALE PER I CUSTOM DATASET
+            if dataset == "custom":
+                payload["custom_task_type"] = custom_task_type
+
 
         # ==========================================
         # BULK INFERENCE (Non richiede input manuale)
@@ -499,26 +535,29 @@ def main():
         elif mode == 'bulk_infer':
             print("\n" + "-" * 40)
             print(f" Preparing Bulk Inference for model: {target_model}")
-            
+
             if dataset == "custom":
-                print(f" Target Test Dataset: {custom_s3_url}")
+                inferred_test_url = custom_s3_url
+                print(f" Target Test Dataset (User Provided): {inferred_test_url}")
             else:
                 test_path = DATASETS_METADATA[dataset][dataset_variant]["test_path"]
-                print(f" Target Test Dataset: s3://{S3_BUCKET}/{test_path}")
+                inferred_test_url = f"s3://{S3_BUCKET}/{test_path}"
+                print(f" Target Test Dataset: {inferred_test_url}")
 
-            # Prepara il payload per la Bulk Inference (NESSUNA TUPLA)
+            # Prepara il payload per la Bulk Inference
             payload = {
-                "mode": "bulk_infer", 
-                "job_id": req_id, 
+                "mode": "bulk_infer",
+                "job_id": req_id,
                 "dataset": dataset,
-                "dataset_variant": dataset_variant, 
+                "dataset_variant": dataset_variant,
                 "target_model": target_model
             }
 
-        # Inject custom fields if the user provided a custom S3 URL (Serve a entrambe le modalità)
-        if dataset == "custom" and custom_s3_url:
-            payload["custom_s3_url"] = custom_s3_url
-            payload["custom_task_type"] = custom_task_type
+            # Inject custom fields if the user provided a custom S3 URL
+            if dataset == "custom":
+                payload["test_s3_url"] = inferred_test_url
+                payload["custom_task_type"] = custom_task_type
+                payload["custom_target_col"] = custom_target_col
 
     # SQS DISPATCH 
     print("\n" + "=" * 60)
@@ -565,11 +604,22 @@ def main():
                             print("=" * 60)
                             print(f" YOUR MODEL ID IS: >>> {body.get('target_model')} <<<")
                             print("    (Save this ID for inference or downloads)")
+
+                        elif payload['mode'] == 'train_and_infer':
+                            print(" END-TO-END PIPELINE COMPLETED SUCCESSFULLY!")
+                            print("=" * 60)
+                            print(" [✓] Dataset Split")
+                            print(" [✓] Distributed Training")
+                            print(" [✓] Bulk Inference & Validation")
+                            print(f"\n YOUR MODEL ID IS: >>> {body.get('target_model', job_id)} <<<")
+                            print(" Metrics(RMSE/ROC-AUC) saved on S3.")
+
                         elif payload['mode'] == 'infer':
                             print(" REAL-TIME PREDICTION RECEIVED!")
                             print("=" * 60)
                             print(f" Task Type       : {body.get('task_type')}")
                             print(f" PREDICTION      : >>> {body.get('prediction')} <<<")
+
                         elif payload['mode'] == 'bulk_infer':
                             print(" BULK INFERENCE COMPLETED!")
                             print("=" * 60)
