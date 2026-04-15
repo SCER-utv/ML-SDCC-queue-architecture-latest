@@ -87,9 +87,10 @@ class AWSManager:
     # ==========================================
     # DATA PIPELINE (SPLIT & METRICS)
     # ==========================================
-    def execute_streaming_split(self, source_url):
-        """Esegue uno split on-the-fly (Train/Test) leggendo e scrivendo in stream su S3."""
-        ratios = self.config.get("split_ratios", {"train": 0.70})
+    def execute_streaming_split(self, source_url, target_train_key=None, target_test_key=None):
+        """Data-Agnostic Splitter che supporta path di destinazione dinamici."""
+        config = self.config # Assicurati di usare il config passato al Manager
+        ratios = config.get("split_ratios", {"train": 0.70})
         train_threshold = ratios.get("train", 0.70)
 
         bucket, source_key = self.parse_s3_uri(source_url)
@@ -97,8 +98,9 @@ class AWSManager:
 
         print(f" [SPLIT] Starting dynamic streaming split for '{file_name}'...")
 
-        train_key = f"splits/{file_name}_train.csv"
-        test_key = f"splits/{file_name}_test.csv"
+        # Usa i path dettati dal Master, o fa un fallback di emergenza
+        train_key = target_train_key if target_train_key else f"splits/{file_name}_train.csv"
+        test_key = target_test_key if target_test_key else f"splits/{file_name}_test.csv"
 
         local_train = f"/tmp/{file_name}_train.csv"
         local_test = f"/tmp/{file_name}_test.csv"
@@ -126,7 +128,7 @@ class AWSManager:
                             test_rows += 1
 
             print(f" [SPLIT] Finished. Train: {train_rows} rows | Test: {test_rows} rows.")
-            print(" [SPLIT] Uploading to S3...")
+            print(" [SPLIT] Uploading to secure paths on S3...")
 
             self.s3_client.upload_file(local_train, bucket, train_key)
             self.s3_client.upload_file(local_test, bucket, test_key)
@@ -141,10 +143,13 @@ class AWSManager:
         print(f" [SPLIT] Operation completed successfully.")
         return train_rows, f"s3://{bucket}/{train_key}"
 
-    def save_metrics(self, test_set_url, dataset_name, dataset_variant, n_workers, n_trees, strategy_name, train_time,
+    def save_metrics(self, test_set_url, experiment_name, dataset_name, dataset_variant, n_workers, n_trees, strategy_name, train_time,
                      inf_time, metrics_dict):
         """Appende i risultati dell'inferenza al file CSV storico su S3."""
-        s3_key = f"results/{dataset_name}/{dataset_name}_{dataset_variant}_distributed_results.csv"
+        if experiment_name is None:
+            s3_key = f"results/{dataset_name}/{dataset_name}_{dataset_variant}_distributed_results.csv"
+        else:
+            s3_key = f"experiments/{experiment_name}/{experiment_name}_distributed_results.csv"
 
         row_data = {
             'Test_set_url': test_set_url,

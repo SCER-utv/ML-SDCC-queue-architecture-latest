@@ -1,0 +1,353 @@
+import sys
+
+
+class CLI:
+    """Gestisce tutte le interazioni a riga di comando con l'utente."""
+
+    def __init__(self, config):
+        self.config = config
+        self.datasets_metadata = config.get("datasets_metadata", {})
+
+    def clear_screen(self):
+        print("\n" * 2)
+
+    def show_welcome(self):
+        self.clear_screen()
+        print("=" * 60)
+        print("  DISTRIBUTED RANDOM FOREST - CLI CLIENT ")
+        print("=" * 60)
+
+    def prompt_operation_mode(self):
+        print("\nSelect Operation Mode:")
+        print("  1)  Distributed Training (Training Only)")
+        print("  2)  End-to-End Pipeline (Train + Auto-Evaluate)")
+        print("  3)  Bulk Inference (Test Set Evaluation)")
+        print("  4)  Real-Time Inference (Single Prediction)")
+        print("  5)  Download Aggregated Model")
+
+        while True:
+            mode_choice = input("\n Enter 1, 2, 3, 4 or 5: ").strip()
+            if mode_choice == '1': return 'train'
+            if mode_choice == '2': return 'train_and_infer'
+            if mode_choice == '3': return 'bulk_infer'
+            if mode_choice == '4': return 'infer'
+            if mode_choice == '5': return 'download'
+            print(" Invalid choice. Please try again.")
+
+    def prompt_dataset_selection(self, mode):
+        print("\n" + "-" * 40)
+        print(" Select Dataset Source:")
+        print("  1) Choose from predefined list (Golden Standard)")
+        print("  2) Provide a Custom S3 URL")
+
+        while True:
+            choice = input("\n Enter 1 or 2: ").strip()
+            if choice in ['1', '2']: break
+            print(" Invalid choice. Please try again.")
+
+        dataset_info = {
+            "name": None, "variant": None, "train_url": None, "test_url": None,
+            "needs_split": False, "target_col": None, "task_type": None, "is_custom": False
+        }
+
+        def get_s3_input(prompt_text):
+            while True:
+                url = input(prompt_text).strip()
+                if url.startswith("s3://") and url.endswith(".csv"):
+                    return url
+                print(" Invalid format. Must start with 's3://' and end with '.csv'.")
+
+        if choice == '1':
+            # --- DISCOVERY DATASETS ---
+            dataset_info["is_custom"] = False
+            available_datasets = list(self.datasets_metadata.keys())
+            if not available_datasets:
+                print(" [ERROR] No datasets found in config metadata!")
+                sys.exit(1)
+
+            dataset_map = {str(i): name for i, name in enumerate(available_datasets, start=1)}
+            for key, name in dataset_map.items():
+                ds_type = self.datasets_metadata[name][list(self.datasets_metadata[name].keys())[0]]["type"]
+                print(f"  {key}) {name.capitalize()} ({ds_type.capitalize()})")
+
+            while True:
+                ds_choice = input(f"\n Select dataset [1-{len(available_datasets)}]: ").strip()
+                if ds_choice in dataset_map:
+                    dataset_info["name"] = dataset_map[ds_choice]
+                    break
+                print(" Invalid dataset selection.")
+
+            print(f"\n Select Dataset Variant for '{dataset_info['name'].upper()}':")
+            available_variants = list(self.datasets_metadata[dataset_info["name"]].keys())
+            variant_map = {str(i): var for i, var in enumerate(available_variants, start=1)}
+            for key, var in variant_map.items():
+                print(f"  {key}) {var}")
+
+            while True:
+                var_choice = input(f"\n Select variant [1-{len(available_variants)}]: ").strip()
+                if var_choice in variant_map:
+                    dataset_info["variant"] = variant_map[var_choice]
+                    break
+                print(" Invalid variant selection.")
+
+            meta = self.datasets_metadata[dataset_info["name"]][dataset_info["variant"]]
+            dataset_info["task_type"] = meta.get("type", "classification")
+            dataset_info["target_col"] = meta.get("target", "Label")
+
+            if mode == 'train_and_infer':
+                print("\n How should we handle this Predefined Dataset?")
+                print("  1) Auto-Split the full dataset in Train/test (if test & train do not exist already)")
+                print("  2) Use pre-existing Train/Test splits")
+                while True:
+                    ans = input(" Enter 1 or 2: ").strip()
+                    if ans in ['1', '2']:
+                        dataset_info["needs_split"] = (ans == '1')
+                        break
+                    print(" Invalid choice.")
+
+        else:
+            # --- CUSTOM DATASETS ---
+            print("\n [CUSTOM DATASET]")
+            dataset_info["is_custom"] = True
+            dataset_info["name"] = "custom"
+            dataset_info["variant"] = "user_provided"
+
+            if mode == 'train':
+                dataset_info["train_url"] = get_s3_input(" Enter the S3 URL of the TRAINING Dataset: ")
+
+            elif mode == 'bulk_infer':
+                dataset_info["test_url"] = get_s3_input(" Enter the S3 URL of the TEST Dataset: ")
+
+            elif mode == 'train_and_infer':
+                print("\n How are your datasets organized?")
+                print("  1) Single Full Dataset (Auto-Split will be executed)")
+                print("  2) Two Separate Datasets (Train file & Test file already existing)")
+                while True:
+                    ans = input(" Enter 1 or 2: ").strip()
+                    if ans in ['1', '2']: break
+                    print(" Invalid choice.")
+
+                if ans == '1':
+                    dataset_info["train_url"] = get_s3_input(" Enter the FULL Dataset S3 URL to split: ")
+                    dataset_info["needs_split"] = True
+                else:
+                    dataset_info["train_url"] = get_s3_input(" Enter the TRAINING Dataset S3 URL: ")
+                    dataset_info["test_url"] = get_s3_input(" Enter the TEST Dataset S3 URL: ")
+                    dataset_info["needs_split"] = False
+
+            elif mode == 'infer':
+                dataset_info["train_url"] = get_s3_input(
+                    " Enter the S3 URL of the dataset (used to extract feature names): ")
+
+            dataset_info["target_col"] = input(
+                " Enter the EXACT name of the Target Column to predict (e.g., Label): ").strip()
+
+            print("\n Specify the ML Task Type for this dataset:")
+            print("  1) Classification\n  2) Regression")
+            while True:
+                task_choice = input(" Enter 1 or 2: ").strip()
+                if task_choice in ['1', '2']:
+                    dataset_info["task_type"] = "classification" if task_choice == '1' else "regression"
+                    break
+                print(" Invalid choice.")
+
+        return dataset_info
+
+    def prompt_experiment_name(self):
+        print("\n" + "-" * 40)
+        print(" Experiment Configuration (Custom Dataset)")
+        print(" Inserendo un nome esperimento, i file di Train/Test verranno")
+        print(" salvati e riutilizzati per garantirti benchmark costanti.")
+        while True:
+            exp_name = input("\n Nome Esperimento (o invio per restare isolato): ").strip()
+            if not exp_name:
+                return None
+
+            # Validazione: solo caratteri sicuri per S3
+            if all(c.isalnum() or c in "-_" for c in exp_name):
+                return exp_name
+            print(" [ERROR] Usa solo lettere, numeri, '-' o '_'.")
+
+    def prompt_cluster_config(self, dataset_info):
+        print("\n" + "-" * 40)
+        print(f"  Cluster Configuration for: {dataset_info['name'].upper()}({dataset_info['variant']})")
+
+        config_data = {}
+        while True:
+            try:
+                config_data['workers'] = int(input(" Enter number of Workers (e.g., 4): "))
+                config_data['trees'] = int(input(" Enter TOTAL number of Trees (e.g., 100): "))
+                if config_data['workers'] > 0 and config_data['trees'] > 0:
+                    break
+                print(" Values must be greater than zero.")
+            except ValueError:
+                print(" Invalid input. Please enter integers only.")
+
+        print("\n Select Training Strategy:")
+        print("  1) Homogeneous  [Same parameters for all workers]")
+        print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
+        while True:
+            strat_choice = input(" Enter 1 or 2: ").strip()
+            if strat_choice in ['1', '2']:
+                config_data['strategy'] = "homogeneous" if strat_choice == '1' else "heterogeneous"
+                break
+            print(" Invalid choice.")
+
+        print("\n Select Hyperparameter Source:")
+        if dataset_info['is_custom']:
+            print("  1) Default Generic Parameters (Standard Scikit-Learn)")
+            print("  2) Manual Configuration")
+        else:
+            print("  1) Golden Standard (Auto-optimized per dataset)")
+            print("  2) Manual Configuration")
+
+        while True:
+            hyper_source = input(" Enter 1 or 2: ").strip()
+            if hyper_source in ['1', '2']:
+                break
+            print(" Invalid choice.")
+
+        config_data['custom_hyperparams'] = None
+
+        if hyper_source == '2':
+            print("\n [MANUAL HYPERPARAMETERS CONFIGURATION]")
+            config_data['custom_hyperparams'] = []
+            iterations = 1 if config_data['strategy'] == "homogeneous" else config_data['workers']
+
+            for w in range(iterations):
+                if config_data['strategy'] == "heterogeneous":
+                    print(f"\n --- Configuring Worker {w + 1}/{config_data['workers']} ---")
+                else:
+                    print("\n --- Configuring Global Parameters ---")
+
+                raw_depth = input(" Max Depth (int, or blank for None): ").strip()
+                max_depth = int(raw_depth) if raw_depth.isdigit() else "None"
+
+                raw_split = input(" Min Samples Split (int, default: 2): ").strip()
+                min_samples_split = int(raw_split) if raw_split.isdigit() else 2
+
+                raw_leaf = input(" Min Samples Leaf (int, default: 1): ").strip()
+                min_samples_leaf = int(raw_leaf) if raw_leaf.isdigit() else 1
+
+                raw_features = input(" Max Features ['sqrt', 'log2', or float < 1.0] (Default: sqrt): ").strip()
+                if not raw_features:
+                    max_features = "sqrt"
+                elif raw_features in ["sqrt", "log2", "None"]:
+                    max_features = raw_features
+                else:
+                    try:
+                        max_features = str(float(raw_features))
+                    except ValueError:
+                        max_features = "sqrt"
+
+                raw_samples = input(" Max Samples per Tree [0.1 - 1.0] (Default: 1.0): ").strip()
+                try:
+                    max_samples = str(float(raw_samples)) if raw_samples else "1.0"
+                except ValueError:
+                    max_samples = "1.0"
+
+                criterion = input(" Criterion [gini, entropy, squared_error] (Leave blank for default): ").strip()
+                if not criterion:
+                    criterion = "gini" if "classification" in dataset_info['task_type'].lower() else "squared_error"
+
+                class_weight = None
+                if "classification" in dataset_info['task_type'].lower():
+                    raw_cw = input(" Class Weight [balanced, balanced_subsample] (Leave blank for None): ").strip()
+                    if raw_cw in ["balanced", "balanced_subsample"]:
+                        class_weight = raw_cw
+
+                worker_params = {
+                    "max_depth": max_depth, "min_samples_split": min_samples_split,
+                    "min_samples_leaf": min_samples_leaf, "max_features": max_features,
+                    "max_samples": max_samples, "criterion": criterion,
+                    "class_weight": class_weight, "n_jobs": -1
+                }
+                config_data['custom_hyperparams'].append(worker_params)
+
+            if config_data['strategy'] == "homogeneous":
+                config_data['custom_hyperparams'] = config_data['custom_hyperparams'] * config_data['workers']
+
+        return config_data
+
+    def prompt_model_selection(self, aws_manager, dataset_info):
+        print("\n" + "-" * 40)
+        print(" Select Target Model ID:")
+        print("  1) Paste a specific Model ID")
+        print(f"  2) Scan S3 to select a model for '{dataset_info['name']}' ({dataset_info['variant']})")
+
+        while True:
+            sel_method = input("\n Enter 1 or 2: ").strip()
+            if sel_method in ['1', '2']: break
+            print(" Invalid choice.")
+
+        if sel_method == '1':
+            while True:
+                target_model = input("\n Paste the exact Model ID (e.g., job_taxi_...): ").strip()
+                if target_model.startswith("job_") or target_model.startswith("rf_"):
+                    return target_model
+                print(" Invalid ID format. It should start with 'job_'")
+        else:
+            print(f"\n [SEARCH] Scanning S3 for saved '{dataset_info['name']}' models...")
+            all_models = aws_manager.list_available_models(dataset_info['name'])
+            models = [m for m in all_models if f"_{dataset_info['variant']}_" in m]
+
+            if not models:
+                print(
+                    f"\n [ERROR] No trained models found for '{dataset_info['name']}' (Variant: {dataset_info['variant']}). Run a training job first!")
+                sys.exit(0)
+
+            print("\n=== AVAILABLE MODELS ===")
+            for i, m in enumerate(models):
+                try:
+                    parts = m.split('_')
+                    trees_count = next((p.replace('trees', '') for p in parts if 'trees' in p), "?")
+                    workers_count = next((p.replace('workers', '') for p in parts if 'workers' in p), "?")
+                    strat_label = "HOMO" if "homogeneous" in m else ("HETE" if "heterogeneous" in m else "N/A ")
+
+                    if len(parts) >= 2 and parts[-2].isdigit() and parts[-1].isdigit():
+                        raw_date, raw_time = parts[-2], parts[-1]
+                        if len(raw_date) == 8 and len(raw_time) == 6:
+                            date_formatted = f"{raw_date[6:8]}/{raw_date[4:6]}/{raw_date[0:4]}"
+                            time_formatted = f"{raw_time[0:2]}:{raw_time[2:4]}:{raw_time[4:6]}"
+                        else:
+                            date_formatted, time_formatted = raw_date, raw_time
+                    else:
+                        date_formatted, time_formatted = "????/??/??", "??:??:??"
+                    print(
+                        f"  [{i}]  Trees: {trees_count:<4} | Workers: {workers_count:<2} | Strat: {strat_label} | Date: {date_formatted} {time_formatted}  (ID: {m})")
+                except Exception:
+                    print(f"  [{i}] {m}")
+
+            while True:
+                try:
+                    model_choice = int(input(f"\n Select Model ID [0-{len(models) - 1}]: "))
+                    if 0 <= model_choice < len(models):
+                        return models[model_choice]
+                    print(" Invalid ID selected.")
+                except ValueError:
+                    print(" Please enter a valid number.")
+
+    def prompt_realtime_input(self, aws_manager, dataset_s3_key, dataset_info):
+        feature_names = aws_manager.get_feature_names_from_s3(dataset_s3_key, target_column=dataset_info['target_col'])
+
+        required_features = len(feature_names) if feature_names else (
+            self.datasets_metadata.get(dataset_info['name'], {}).get(dataset_info['variant'], {}).get("features", 0)
+        )
+
+        print("\n" + "-" * 40)
+        print(" Real-Time Prediction Input")
+        if required_features > 0:
+            print(f" WARNING: Dataset expects EXACTLY {required_features} features!")
+        if feature_names:
+            print(f"\n Expected layout: \n {', '.join(feature_names)}")
+
+        while True:
+            prompt_text = f" Enter {required_features} comma-separated values: " if required_features > 0 else " Enter the comma-separated values: "
+            raw_tuple = input(prompt_text).strip()
+            try:
+                tuple_data = [float(x.strip()) for x in raw_tuple.split(',')]
+                if required_features == 0 or len(tuple_data) == required_features:
+                    return tuple_data
+                print(f" [ERROR] Expected {required_features} values, got {len(tuple_data)}.")
+            except ValueError:
+                print(" [ERROR] Formatting error. Use numbers only (e.g., 10.5, 3).")
