@@ -4,31 +4,31 @@ import math
 import os
 from src.utils.config import load_config
 
-
+# orchestrates the distributed training workflow
 class TrainingPipeline:
-    """Orchestra il flusso di lavoro di Addestramento Distribuito."""
 
     def __init__(self, aws_manager):
         self.aws = aws_manager
         self.config = load_config()
 
+    # executes the training process across distributed workers
     def run(self, job_data, job_id):
         num_workers = job_data['num_workers']
 
-        # 1. Recupero Stato (Fault Tolerance)
+        # 1. fault tolerance state recovery
         completed_train_tasks, s3_inference_results, start_train, tasks_dispatched, training_time = self._recover_or_initialize_state(
             job_id)
 
-        # 2. Provisioning Infrastruttura
+        # 2. infrastructure provisioning
         self.aws.scale_worker_infrastructure(num_workers)
         time.sleep(10)
 
-        # 3. Gestione Data Split
+        # 3. data split management
         calculated_train_rows = None
         if not tasks_dispatched:
             calculated_train_rows = self._prepare_dataset(job_data)
 
-        # 4. Generazione Task (Fan-Out)
+        # 4. fan-out task generation
         if not tasks_dispatched:
             self._generate_tasks(job_data, job_id, calculated_train_rows)
             tasks_dispatched = True
@@ -37,20 +37,20 @@ class TrainingPipeline:
         else:
             print(" [RECOVERY] SQS Fan-Out skipped to prevent duplicates.")
 
-        # 5. Attesa Risultati (Polling SQS)
+        # 5. wait for worker results via sqs polling
         self._wait_for_workers(job_id, num_workers, completed_train_tasks, start_train, tasks_dispatched)
 
-        # 6. Chiusura e Notifica
+        # 6. closure and client notification
         total_run_time = time.time() - start_train
         print(f" [TIMERS] Distributed Training completed in {total_run_time:.2f}s")
 
         if job_data.get('mode') == 'train':
             self._send_client_response(job_id, "train", total_run_time)
 
-    # ==============================================================
-    # METODI PRIVATI DI SUPPORTO (Dettagli Implementativi)
-    # ==============================================================
 
+    #support methods
+
+    # recovers previous training state from dynamodb or initializes a new one
     def _recover_or_initialize_state(self, job_id):
         completed_train_tasks, s3_results, db_start, tasks_dispatched, train_time, _ = self.aws.get_job_state(job_id)
 
@@ -63,17 +63,18 @@ class TrainingPipeline:
 
         return completed_train_tasks, s3_results, start_train, tasks_dispatched, train_time
 
+    # handles dataset streaming split and row counting
     def _prepare_dataset(self, job_data):
         needs_split = job_data.get('needs_split', False)
         train_source_url = job_data['train_s3_url']
         bucket, source_key = self.aws.parse_s3_uri(train_source_url)
 
-        # Il Master (vedi step 3) deciderà dove dobbiamo salvare i file
+        # master decides the target paths for saving files
         target_train_key = job_data.get('target_train_key')
         target_test_key = job_data.get('target_test_key')
 
         if needs_split and target_train_key and target_test_key:
-            # CONTROLLO PERSISTENZA: Evitiamo di ricreare split esistenti (ottimo per i Benchmark!)
+            # persistence check to avoid recreating existing splits for benchmark consistency
             if not self.aws.check_s3_file_exists(bucket, target_train_key):
                 print(f" [PIPELINE] Target split not found. Splitting {source_key}...")
                 try:
@@ -82,7 +83,7 @@ class TrainingPipeline:
                         target_train_key=target_train_key,
                         target_test_key=target_test_key
                     )
-                    # Aggiorniamo dinamicamente gli URL nel payload per la fase di invio ai worker
+                    # dynamically update urls in the payload for workers
                     job_data['train_s3_url'] = f"s3://{bucket}/{target_train_key}"
                     job_data['test_s3_url'] = f"s3://{bucket}/{target_test_key}"
                     return calculated_train_rows
@@ -99,6 +100,7 @@ class TrainingPipeline:
             print(" [PIPELINE] No split required. Using source dataset directly.")
             return self.aws.get_total_rows_s3_select(bucket, source_key)
 
+    # generates and queues individual training tasks for each worker
     def _generate_tasks(self, job_data, job_id, total_rows):
         num_workers = job_data['num_workers']
         num_trees_total = job_data['num_trees']
@@ -124,6 +126,7 @@ class TrainingPipeline:
             except FileNotFoundError:
                 pass
 
+        # fallback configuration
         if not target_strategies:
             target_strategies = [{"max_depth": None, "max_features": "sqrt",
                                   "criterion": "gini" if task_type == 'classification' else 'squared_error'}] * num_workers
@@ -179,6 +182,7 @@ class TrainingPipeline:
             self.aws.sqs_client.send_message(QueueUrl=self.config["sqs_queues"]["train_task"], MessageBody=json.dumps(task_payload))
             print(f" Enqueued {task_payload['task_id']} ({trees} trees).")
 
+    # polls the sqs response queue until all workers complete their training tasks
     def _wait_for_workers(self, job_id, num_workers, completed_train_tasks, start_train, tasks_dispatched):
         print("\n [EVENT LOOP] Master listening actively for Worker responses...\n")
         train_resp_queue = self.config["sqs_queues"]["train_response"]
@@ -201,6 +205,7 @@ class TrainingPipeline:
         self.aws.update_job_state(job_id, completed_train_tasks, {}, start_train, tasks_dispatched, training_time, 0.0)
         print("\n [PIPELINE] All Workers completed their Training tasks!")
 
+    # notifies the client that the training pipeline has finished
     def _send_client_response(self, job_id, mode, total_time):
         client_response_queue = self.config.get("sqs_queues", {}).get("client_response")
         if client_response_queue:

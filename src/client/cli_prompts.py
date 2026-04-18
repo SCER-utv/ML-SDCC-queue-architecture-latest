@@ -1,22 +1,24 @@
 import sys
 
-
+# handles all command-line interactions with the user
 class CLI:
-    """Gestisce tutte le interazioni a riga di comando con l'utente."""
 
     def __init__(self, config):
         self.config = config
         self.datasets_metadata = config.get("datasets_metadata", {})
 
+    # clears the terminal screen
     def clear_screen(self):
         print("\n" * 2)
 
+    # displays the welcome banner
     def show_welcome(self):
         self.clear_screen()
         print("=" * 60)
         print("  DISTRIBUTED RANDOM FOREST - CLI CLIENT ")
         print("=" * 60)
 
+    # prompts the user to select the primary operation mode
     def prompt_operation_mode(self):
         print("\nSelect Operation Mode:")
         print("  1)  Distributed Training (Training Only)")
@@ -34,6 +36,7 @@ class CLI:
             if mode_choice == '5': return 'download'
             print(" Invalid choice. Please try again.")
 
+    # guides the user through dataset selection (golden standard or custom s3 url)
     def prompt_dataset_selection(self, mode):
         print("\n" + "-" * 40)
         print(" Select Dataset Source:")
@@ -50,6 +53,7 @@ class CLI:
             "needs_split": False, "target_col": None, "task_type": None, "is_custom": False
         }
 
+        # helper function to validate s3 uri input
         def get_s3_input(prompt_text):
             while True:
                 url = input(prompt_text).strip()
@@ -58,7 +62,7 @@ class CLI:
                 print(" Invalid format. Must start with 's3://' and end with '.csv'.")
 
         if choice == '1':
-            # --- DISCOVERY DATASETS ---
+            # discovery datasets
             dataset_info["is_custom"] = False
             available_datasets = list(self.datasets_metadata.keys())
             if not available_datasets:
@@ -106,7 +110,7 @@ class CLI:
                     print(" Invalid choice.")
 
         else:
-            # --- CUSTOM DATASETS ---
+            # custom datasets
             print("\n [CUSTOM DATASET]")
             dataset_info["is_custom"] = True
             dataset_info["name"] = "custom"
@@ -136,11 +140,9 @@ class CLI:
                     dataset_info["needs_split"] = False
 
             elif mode == 'infer':
-                dataset_info["train_url"] = get_s3_input(
-                    " Enter the S3 URL of the dataset (used to extract feature names): ")
+                dataset_info["train_url"] = get_s3_input(" Enter the S3 URL of the dataset (used to extract feature names): ")
 
-            dataset_info["target_col"] = input(
-                " Enter the EXACT name of the Target Column to predict (e.g., Label): ").strip()
+            dataset_info["target_col"] = input(" Enter the EXACT name of the Target Column to predict (e.g., Label): ").strip()
 
             print("\n Specify the ML Task Type for this dataset:")
             print("  1) Classification\n  2) Regression")
@@ -153,6 +155,7 @@ class CLI:
 
         return dataset_info
 
+    # prompts for a custom experiment name to organize s3 outputs
     def prompt_experiment_name(self):
         print("\n" + "-" * 40)
         print(" Experiment Configuration (Custom Dataset)")
@@ -163,11 +166,12 @@ class CLI:
             if not exp_name:
                 return None
 
-            # Validazione: solo caratteri sicuri per S3
+            # validate: alphanumeric and dash/underscore only for safe s3 keys
             if all(c.isalnum() or c in "-_" for c in exp_name):
                 return exp_name
             print(" [ERROR] Usa solo lettere, numeri, '-' o '_'.")
 
+    # gathers cluster settings and machine learning hyperparameters
     def prompt_cluster_config(self, dataset_info):
         print("\n" + "-" * 40)
         print(f"  Cluster Configuration for: {dataset_info['name'].upper()}({dataset_info['variant']})")
@@ -185,7 +189,7 @@ class CLI:
 
         print("\n Select Training Strategy:")
         print("  1) Homogeneous  [Same parameters for all workers]")
-        print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
+        print("  2) Heterogeneous [Different parameters per worker_core, variance boosting]")
         while True:
             strat_choice = input(" Enter 1 or 2: ").strip()
             if strat_choice in ['1', '2']:
@@ -269,6 +273,7 @@ class CLI:
 
         return config_data
 
+    # allows the user to select an existing distributed model from s3 or paste an id
     def prompt_model_selection(self, aws_manager, dataset_info):
         print("\n" + "-" * 40)
         print(" Select Target Model ID:")
@@ -327,6 +332,7 @@ class CLI:
                 except ValueError:
                     print(" Please enter a valid number.")
 
+    # prompts for manual data entry of features to perform real-time inference
     def prompt_realtime_input(self, aws_manager, dataset_s3_key, dataset_info):
         feature_names = aws_manager.get_feature_names_from_s3(dataset_s3_key, target_column=dataset_info['target_col'])
 

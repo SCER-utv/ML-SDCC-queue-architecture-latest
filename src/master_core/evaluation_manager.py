@@ -5,20 +5,20 @@ from sklearn.metrics import roc_auc_score, accuracy_score, mean_squared_error, r
     precision_score, recall_score, f1_score
 
 
+# handles the aggregation of worker results and metrics calculation on the master
 class EvaluationManager:
-    """Gestisce l'aggregazione dei risultati dei Worker e il calcolo delle metriche sul Master."""
 
+    # initializes the manager with an aws manager instance for s3 operations
     def __init__(self, aws_manager):
-        # Riceve l'istanza di aws_manager per poter scaricare/caricare file da S3
         self.aws = aws_manager
 
+    # orchestrates the final aggregation and evaluation phase using metadata from the payload
     def aggregate_and_evaluate(self, job_data, job_id, dataset_name, dataset_variant, s3_inference_results, num_workers,
                                trees, weights, train_time, infer_time, strategy):
         print("\n" + "=" * 50)
         print(" FINAL AGGREGATION & EVALUATION PHASE")
         print("=" * 50)
 
-        # Il Master è Data-Agnostic: legge tutto dal payload senza usare il ModelFactory!
         task_type = job_data['task_type']
         target_col = job_data['target_column']
         test_s3_uri = job_data['test_s3_url']
@@ -28,6 +28,8 @@ class EvaluationManager:
             return
 
         print(f" Reading Ground Truth from column '{target_col}'...")
+
+        # reads the ground truth column directly from the test set on s3
         try:
             df_test = pd.read_csv(test_s3_uri, usecols=[target_col])
             y_true = df_test[target_col].values
@@ -35,7 +37,7 @@ class EvaluationManager:
             print(f" [CRITICAL ERROR] Fallito il caricamento Test Set: {e}")
             return
 
-        # Smistamento della logica di valutazione
+        # routes to the appropriate evaluation logic based on task type
         if task_type == 'classification':
             metrics_dict = self._evaluate_classification(predictions_list, y_true, num_workers)
         else:
@@ -43,16 +45,16 @@ class EvaluationManager:
 
         print("=" * 50 + "\n")
 
-        # Salvataggio e pulizia
         strategy_name = "Homogeneous" if strategy == "homogeneous" else "Heterogeneous"
-
         experiment_name = job_data['experiment_name']
-        self.aws.save_metrics(test_s3_uri, experiment_name, dataset_name, dataset_variant, num_workers, trees, strategy_name, train_time,
+
+        # saves the final metrics and cleans up temporary inference files
+        self.aws.save_metrics(test_s3_uri, experiment_name, dataset_name, dataset_variant, num_workers, trees,
+                              strategy_name, train_time,
                               infer_time, metrics_dict)
         self.aws.cleanup_s3_inference_files(s3_inference_results)
 
-    # --- METODI PRIVATI DI SUPPORTO ---
-
+    # downloads and loads temporary .npy files containing worker predictions
     def _download_worker_results(self, s3_inference_results):
         predictions_list = []
         print(f" Downloading {len(s3_inference_results)} inference result files from S3...")
@@ -67,11 +69,11 @@ class EvaluationManager:
             print(" [CRITICAL ERROR] Nessun risultato scaricato. Impossibile aggregare.")
         return predictions_list
 
+    # evaluates classification tasks using majority voting
     def _evaluate_classification(self, predictions_list, y_true, num_workers):
         print(" [EVALUATION] Classification task detected. Executing Majority Voting...")
         total_votes = np.sum(predictions_list, axis=0)
 
-        # Gestione binaria vs multiclasse
         if len(predictions_list[0].shape) == 2:
             votes_0, votes_1 = total_votes[:, 0], total_votes[:, 1]
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -99,6 +101,7 @@ class EvaluationManager:
             'Precision': float(round(precision, 4)), 'Recall': float(round(recall, 4)), 'F1-Score': float(round(f1, 4))
         }
 
+    # evaluates regression tasks using weighted averaging based on tree count
     def _evaluate_regression(self, predictions_list, y_true, weights):
         print(" [EVALUATION] Regression task detected. Executing Weighted Averaging...")
         y_pred = np.average(predictions_list, axis=0, weights=weights)

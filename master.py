@@ -1,16 +1,15 @@
 import json
 import threading
+
+from src.master_core.evaluation_manager import EvaluationManager
+from src.master_core.inference_pipeline import InferencePipeline
+from src.master_core.training_pipeline import TrainingPipeline
 from src.utils.config import load_config
 
 from src.aws.aws_manager import AWSManager
-from src.core.evaluation_manager import EvaluationManager
-from src.core.training_pipeline import TrainingPipeline
-from src.core.inference_pipeline import InferencePipeline
 
 
-# ==========================================
-# HEARTBEAT
-# ==========================================
+# extends sqs message visibility in the background to prevent timeout during long jobs
 def extend_client_sqs_visibility(aws, queue_url, receipt_handle, stop_event):
     while not stop_event.is_set():
         stop_event.wait(20)
@@ -22,24 +21,18 @@ def extend_client_sqs_visibility(aws, queue_url, receipt_handle, stop_event):
                 pass
 
 
-# ==========================================
-# RISOLUTORE PATH (Sicurezza & Routing)
-# ==========================================
+# translates the client's thin payload into concrete and secure s3 paths for the master
 def resolve_paths(job_data, config):
-    """Traduce l'intenzione del Client (Thin Payload) in URL S3 concreti e sicuri per il Master."""
     is_custom = job_data.get('is_custom', False)
     mode = job_data.get('mode')
     bucket = config.get("s3_bucket")
     job_id = job_data.get('job_id')
     needs_split = job_data.get('needs_split', False)
 
-    # Preleviamo il nome dell'esperimento (sarà None se l'utente non l'ha inserito)
     experiment_name = job_data.get('experiment_name')
 
     if not is_custom:
-        # ==========================================
-        # LOGICA GOLD STANDARD (Dataset Ufficiali)
-        # ==========================================
+        # handle official benchmark datasets (gold standard)
         meta = config['datasets_metadata'][job_data['dataset']][job_data['dataset_variant']]
 
         if mode in ['train', 'train_and_infer']:
@@ -53,24 +46,17 @@ def resolve_paths(job_data, config):
         elif mode == 'bulk_infer':
             job_data['test_s3_url'] = f"s3://{bucket}/{meta['test_path']}"
 
-        # Per i Gold Standard, salviamo i risultati in una cartella dedicata e ordinata
-        job_data[
-            'metrics_s3_key'] = f"metrics/gold_standard/{job_data['dataset']}/{job_data['dataset_variant']}/results_{job_id}.json"
+        job_data['metrics_s3_key'] = f"metrics/gold_standard/{job_data['dataset']}/{job_data['dataset_variant']}/results_{job_id}.json"
 
     else:
-        # ==========================================
-        # LOGICA CUSTOM (Dati dell'Utente / Esperimenti)
-        # ==========================================
-
-        # 1. Definiamo la cartella "casa" di questo job
-        # Se c'è un esperimento usiamo quello, altrimenti lo isoliamo in splits/job_id
+        # handle user-provided datasets and custom experiments
         folder_base = f"experiments/{experiment_name}" if experiment_name else f"splits/{job_id}"
 
         if mode in ['train', 'train_and_infer']:
             job_data['train_s3_url'] = job_data.get('custom_train_url')
 
             if needs_split:
-                # Il Master forzerà lo split a salvare in queste chiavi esatte
+                # force split outputs to target these exact keys
                 job_data['target_train_key'] = f"{folder_base}/train.csv"
                 job_data['target_test_key'] = f"{folder_base}/test.csv"
             else:
@@ -79,16 +65,14 @@ def resolve_paths(job_data, config):
         elif mode == 'bulk_infer':
             job_data['test_s3_url'] = job_data.get('custom_test_url')
 
-        # 2. Assegniamo il path per il salvataggio dei risultati dell'Evaluator
-        # Finiranno esattamente accanto ai file csv dell'esperimento!
+        # isolate evaluation metrics next to the experiment csv files
         job_data['metrics_s3_key'] = f"{folder_base}/results_{job_id}.json"
 
     return job_data
 
 
-# ==========================================
-# ORCHESTRATORE
-# ==========================================
+
+# initializes components and starts the main event loop to orchestrate client jobs
 def main():
     print(" [MASTER] Inizializzazione componenti in corso...")
     config = load_config()
@@ -115,7 +99,7 @@ def main():
 
             print(f"\n{'=' * 50}\n AVVIO PIPELINE: {job_id} (Mode: {mode})\n{'=' * 50}")
 
-            # TRADUZIONE: Il Master decide autoritariamente i Path
+            # securely resolve and assign authoritative s3 paths
             job_data = resolve_paths(raw_job_data, config)
 
             stop_event = threading.Event()
@@ -124,6 +108,7 @@ def main():
             heartbeat_thread.start()
 
             try:
+                # dynamically route the job to the appropriate pipeline
                 if mode == 'train':
                     trainer.run(job_data, job_id)
                 elif mode == 'bulk_infer':
@@ -140,9 +125,10 @@ def main():
             except Exception as e:
                 print(f" [CRITICAL ERROR] Pipeline execution failed: {e}")
             finally:
+                # ensure heartbeat stops and the processed message is deleted from the queue
                 stop_event.set()
                 heartbeat_thread.join()
-                aws.sqs_client.delete_message(QueueUrl=CLIENT_QUEUE_URL, ReceiptHandle=receipt_handle)
+                aws.delete_message(CLIENT_QUEUE_URL, receipt_handle)
                 print(f" JOB {job_id} PROCESSED AND REMOVED FROM QUEUE.\n")
 
 

@@ -8,11 +8,8 @@ import botocore
 import pandas as pd
 
 
+# this class handles all the aws interactions from master
 class AWSManager:
-    """
-    Classe centralizzata per la gestione di tutte le interazioni con i servizi AWS:
-    S3 (Storage), EC2/AutoScaling (Compute), e DynamoDB (State/Fault Tolerance).
-    """
 
     def __init__(self, config):
         self.config = config
@@ -21,24 +18,21 @@ class AWSManager:
         self.asg_name = config.get("asg_name")
         self.dynamodb_table = config.get("dynamodb_table", "JobStatus")
 
-        # Inizializza i client AWS una volta sola (Connection Pooling)
+        # aws clients initialization
         self.s3_client = boto3.client('s3', region_name=self.region)
         self.asg_client = boto3.client('autoscaling', region_name=self.region)
         self.ec2_client = boto3.client('ec2', region_name=self.region)
         self.dynamodb = boto3.resource('dynamodb', region_name=self.region)
         self.sqs_client = boto3.client('sqs', region_name=self.region)
 
-    # ==========================================
-    # UTILITY S3 GENERICHE
-    # ==========================================
+    # extract bucket and key from a s3 url
     @staticmethod
     def parse_s3_uri(s3_uri):
-        """Estrae bucket e key da un URL S3 completo."""
         parts = s3_uri.replace("s3://", "").split("/", 1)
         return parts[0], parts[1]
 
+    # rapid check of a file existence
     def check_s3_file_exists(self, bucket, key):
-        """Controlla rapidamente se un file esiste su S3 senza scaricarlo."""
         try:
             self.s3_client.head_object(Bucket=bucket, Key=key)
             return True
@@ -47,8 +41,8 @@ class AWSManager:
                 return False
             raise e
 
+    # executes a sql query on s3 to count rows of a csv
     def get_total_rows_s3_select(self, bucket, key):
-        """Esegue una query SQL su S3 per contare le righe di un CSV istantaneamente."""
         print(f" [S3-SELECT] Executing 'SELECT count(*)' on s3://{bucket}/{key}...")
         try:
             resp = self.s3_client.select_object_content(
@@ -67,8 +61,8 @@ class AWSManager:
             print(f" [S3-SELECT ERROR] Failed query: {e}")
             raise e
 
+    # retrieves all distributed model chunks (.joblib) saved on s3
     def count_model_parts(self, bucket, dataset, target_model):
-        """Trova tutti i frammenti (.joblib) di un modello distribuito salvato su S3."""
         try:
             model_dataset_folder = target_model.split('_')[1]
         except Exception:
@@ -84,12 +78,10 @@ class AWSManager:
 
         return chunks
 
-    # ==========================================
-    # DATA PIPELINE (SPLIT & METRICS)
-    # ==========================================
+
+    # streams a csv from s3 to dynamically split it into train and test sets
     def execute_streaming_split(self, source_url, target_train_key=None, target_test_key=None):
-        """Data-Agnostic Splitter che supporta path di destinazione dinamici."""
-        config = self.config # Assicurati di usare il config passato al Manager
+        config = self.config
         ratios = config.get("split_ratios", {"train": 0.70})
         train_threshold = ratios.get("train", 0.70)
 
@@ -98,7 +90,7 @@ class AWSManager:
 
         print(f" [SPLIT] Starting dynamic streaming split for '{file_name}'...")
 
-        # Usa i path dettati dal Master, o fa un fallback di emergenza
+        # fallback to default keys if dynamic paths are not provided by master
         train_key = target_train_key if target_train_key else f"splits/{file_name}_train.csv"
         test_key = target_test_key if target_test_key else f"splits/{file_name}_test.csv"
 
@@ -143,12 +135,14 @@ class AWSManager:
         print(f" [SPLIT] Operation completed successfully.")
         return train_rows, f"s3://{bucket}/{train_key}"
 
-    def save_metrics(self, test_set_url, experiment_name, dataset_name, dataset_variant, n_workers, n_trees, strategy_name, train_time,
-                     inf_time, metrics_dict):
-        """Appende i risultati dell'inferenza al file CSV storico su S3."""
+    # appends inference results and metrics to a historical csv file on s3
+    def save_metrics(self, test_set_url, experiment_name, dataset_name, dataset_variant, n_workers, n_trees, strategy_name, train_time, inf_time, metrics_dict):
+
         if experiment_name is None:
+            # case of preconfigured datasets, using discovery
             s3_key = f"results/{dataset_name}/{dataset_name}_{dataset_variant}_distributed_results.csv"
         else:
+            # case of custom datasets, experiment name used to keep track of different configurations on same dataset
             s3_key = f"experiments/{experiment_name}/{experiment_name}_distributed_results.csv"
 
         row_data = {
@@ -179,8 +173,8 @@ class AWSManager:
         self.s3_client.put_object(Bucket=self.bucket, Key=s3_key, Body=csv_buffer.getvalue())
         print(f" [METRICS] Results securely appended to: s3://{self.bucket}/{s3_key}")
 
+    # deletes temporary .npy prediction files generated by workers after aggregation
     def cleanup_s3_inference_files(self, s3_inference_results):
-        """Elimina i file temporanei .npy creati dai worker dopo averli aggregati."""
         print(" [CLEANUP] Deleting temporary .npy from S3...")
         deleted_count = 0
         for task_id, s3_uri in s3_inference_results.items():
@@ -192,11 +186,10 @@ class AWSManager:
                 print(f" [CLEANUP ERROR] Delete error of {s3_uri}: {e}")
         print(f" [CLEANUP] Removed {deleted_count} temporary files successfully.")
 
-    # ==========================================
-    # INFRASTRUCTURE & FAULT TOLERANCE
-    # ==========================================
+
+
+    # dynamically scales ec2 instances using the auto scaling group
     def scale_worker_infrastructure(self, num_workers):
-        """Scala dinamicamente le istanze EC2 tramite l'Auto Scaling Group."""
         print(f" [ASG] Setting desired capacity to {num_workers} workers...")
         self.asg_client.update_auto_scaling_group(
             AutoScalingGroupName=self.asg_name, MinSize=0, DesiredCapacity=num_workers, MaxSize=10
@@ -208,7 +201,8 @@ class AWSManager:
         print(f" [ASG] Waiting for instances to start for tagging...")
         found_instances = []
 
-        for _ in range(24):  # Timeout di 120 secondi
+        # 120 seconds timeout loop
+        for _ in range(24):
             time.sleep(5)
             response = self.ec2_client.describe_instances(
                 Filters=[
@@ -225,6 +219,7 @@ class AWSManager:
                 break
 
         if len(found_instances) > 0:
+            # case of instances lack handling
             if len(found_instances) < num_workers:
                 print(
                     f" [ASG WARN] Requested {num_workers} workers, but AWS provided {len(found_instances)}. Proceeding degraded.")
@@ -235,7 +230,7 @@ class AWSManager:
                 try:
                     self.ec2_client.create_tags(
                         Resources=[instance_id],
-                        Tags=[{'Key': 'Name', 'Value': f"DRF-worker{i + 1}"}]
+                        Tags=[{'Key': 'Name', 'Value': f"DRF-worker_{i + 1}"}]
                     )
                 except Exception:
                     pass
@@ -243,8 +238,8 @@ class AWSManager:
         else:
             print(" [ASG CRITICAL] No instances provided by ASG within timeout!")
 
+    # retrieves the progress state of a specific job from dynamodb
     def get_job_state(self, job_id):
-        """Legge lo stato di avanzamento di un job da DynamoDB."""
         table = self.dynamodb.Table(self.dynamodb_table)
         try:
             response = table.get_item(Key={'job_id': job_id})
@@ -261,9 +256,9 @@ class AWSManager:
             pass
         return set(), {}, None, False, 0.0, 0.0
 
+    # updates the progress state of a job in dynamodb
     def update_job_state(self, job_id, completed_train_set, completed_infer_dict, start_time, tasks_dispatched,
                          training_time=0.0, inference_time=0.0):
-        """Aggiorna lo stato di avanzamento di un job su DynamoDB."""
         table = self.dynamodb.Table(self.dynamodb_table)
         table.put_item(Item={
             'job_id': job_id,
@@ -274,3 +269,7 @@ class AWSManager:
             'tempo_training': str(training_time),
             'tempo_inferenza': str(inference_time)
         })
+
+    # deletes a processed message from an sqs queue
+    def delete_message(self, queue_url, receipt_handle):
+        self.sqs_client.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)

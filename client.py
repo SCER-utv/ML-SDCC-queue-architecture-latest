@@ -6,7 +6,7 @@ from src.utils.config import load_config
 from src.aws.client_aws_manager import ClientAWSManager
 from src.client.cli_prompts import CLI
 
-
+# main entry point for the interactive command-line interface
 def main():
     try:
         config = load_config()
@@ -19,7 +19,7 @@ def main():
 
     cli.show_welcome()
 
-    # 1. Raccolta Intenzioni
+    # gather user intentions and operation flow through interactive prompts
     mode = cli.prompt_operation_mode()
     dataset_info = cli.prompt_dataset_selection(mode)
 
@@ -39,10 +39,10 @@ def main():
         aws.download_and_merge_model(dataset_info['name'], target_model)
         sys.exit(0)
 
-    # 2. Gestione Inferenza Real-Time
+    # handle real-time inference inputs and feature extraction
     tuple_data = None
     if mode == 'infer':
-        # Passiamo l'URL o il path base per far scaricare l'header delle feature
+        # pass the base url to download feature headers for prompt guidance
         s3_key = ""
         if dataset_info['is_custom']:
             s3_key = dataset_info['train_url'].replace(f"s3://{aws.bucket}/", "") if dataset_info['train_url'] else ""
@@ -51,7 +51,7 @@ def main():
 
         tuple_data = cli.prompt_realtime_input(aws, s3_key, dataset_info)
 
-    # 3. Costruzione del Payload (Il nuovo contratto "Sottile")
+    # construct the thin payload representing the client contract for the master node
     dataset = dataset_info['name']
     dataset_variant = dataset_info['variant']
 
@@ -64,7 +64,7 @@ def main():
     else:
         job_id = req_id
 
-    # ATTENZIONE: Questo è il nuovo dizionario inviato al Master!
+    # this dictionary encapsulates the entire job configuration sent to the master
     payload = {
         "mode": mode,
         "job_id": job_id,
@@ -73,7 +73,7 @@ def main():
         "dataset": dataset,
         "dataset_variant": dataset_variant,
 
-        # Invia solo gli URL inseriti a mano, se presenti
+        # include manually entered urls if present
         "custom_train_url": dataset_info.get('train_url'),
         "custom_test_url": dataset_info.get('test_url'),
 
@@ -91,7 +91,7 @@ def main():
         "client_start_time": time.time()
     }
 
-    # 4. Spedizione e Attesa
+    # dispatch the payload to the queue and wait for cluster response
     aws.dispatch_and_wait(payload)
 
 

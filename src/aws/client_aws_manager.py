@@ -4,9 +4,8 @@ import time
 import joblib
 import boto3
 
-
+# handles all communications between the local client and the aws infrastructure
 class ClientAWSManager:
-    """Gestisce tutte le comunicazioni tra il Client locale e l'infrastruttura AWS."""
 
     def __init__(self, config):
         self.region = config.get("aws_region")
@@ -14,12 +13,12 @@ class ClientAWSManager:
         self.client_queue_url = config["sqs_queues"]["client"]
         self.client_resp_queue = config["sqs_queues"].get("client_response")
 
-        # Inizializziamo i client AWS una volta sola (Connection Pooling)
+        # aws clients initialization
         self.s3_client = boto3.client('s3', region_name=self.region)
         self.sqs_client = boto3.client('sqs', region_name=self.region)
 
+    # scans s3 to find all trained models for a given dataset
     def list_available_models(self, dataset):
-        """Scansiona S3 per trovare tutti i modelli addestrati per un certo dataset."""
         prefix = f"models/{dataset}/"
         resp = self.s3_client.list_objects_v2(Bucket=self.bucket, Prefix=prefix, Delimiter='/')
         models = []
@@ -29,8 +28,8 @@ class ClientAWSManager:
                 models.append(folder_name)
         return models
 
+    # reads the header of a csv on s3 on-the-fly to guide the user in real-time input
     def get_feature_names_from_s3(self, s3_key, target_column="Label"):
-        """Legge on-the-fly l'header di un CSV su S3 per guidare l'utente nell'input real-time."""
         try:
             response = self.s3_client.get_object(Bucket=self.bucket, Key=s3_key)
             first_line = next(response['Body'].iter_lines()).decode('utf-8')
@@ -45,8 +44,8 @@ class ClientAWSManager:
             print(f" [WARNING] Unable to read header from S3: {e}")
             return []
 
+    # downloads worker .joblib files and merges them into a single local scikit-learn model
     def download_and_merge_model(self, dataset, job_id):
-        """Scarica i file .joblib dei worker e li unisce in un unico modello Scikit-Learn locale."""
         print(f"\n" + "-" * 40)
         print(f" [DOWNLOAD] Fetching model chunks for {job_id}...")
         prefix = f"models/{dataset}/{job_id}/"
@@ -97,8 +96,8 @@ class ClientAWSManager:
         print(f" Total Trees: {base_model.n_estimators}")
         print("=" * 60 + "\n")
 
+    # dispatches the job to the master node and patiently waits for the response
     def dispatch_and_wait(self, payload):
-        """Spedisce il job al Master Node e attende pazientemente la risposta."""
         print("\n" + "=" * 60)
         print(" Dispatching request to Master Node...")
 
@@ -116,7 +115,8 @@ class ClientAWSManager:
             start_wait = time.time()
             result_found = False
 
-            while time.time() - start_wait < 900:  # Timeout 15 minuti
+            # 15 minutes timeout
+            while time.time() - start_wait < 900:
                 res = self.sqs_client.receive_message(QueueUrl=self.client_resp_queue, MaxNumberOfMessages=1,
                                                       WaitTimeSeconds=20)
                 if 'Messages' in res:
@@ -124,7 +124,7 @@ class ClientAWSManager:
                         body = json.loads(msg['Body'])
                         receipt = msg['ReceiptHandle']
 
-                        # Controlliamo se è la risposta al nostro job esatto
+                        # check if it's the response for our exact job
                         if body.get("job_id") == payload['job_id']:
                             print("\n" + "=" * 60)
                             if payload['mode'] == 'train':
@@ -153,7 +153,7 @@ class ClientAWSManager:
                             result_found = True
                             break
                         else:
-                            # Non è per noi, rimettiamo il messaggio in coda immediatamente
+                            # not for us, put the message back in the queue immediately
                             try:
                                 self.sqs_client.change_message_visibility(QueueUrl=self.client_resp_queue,
                                                                           ReceiptHandle=receipt, VisibilityTimeout=0)
