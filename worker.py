@@ -26,10 +26,10 @@ def handle_task(aws, msg, in_queue, out_queue, handler_process_func, task_type):
         }
         aws.sqs.send_message(QueueUrl=out_queue, MessageBody=json.dumps(response))
         aws.delete_message(in_queue, receipt)
-        print(f" [{task_type.upper()}] {body['task_id']} completato con successo!\n")
+        print(f" [{task_type.upper()}] {body['task_id']} completed successfully!\n")
 
     except Exception as e:
-        print(f" \n[FAULT TOLERANCE] Errore critico durante {task_type}: {e}")
+        print(f" \n[FAULT TOLERANCE] Critical error during {task_type}: {e}")
         aws.release_message(in_queue, receipt)
         time.sleep(5)
 
@@ -38,7 +38,7 @@ def handle_task(aws, msg, in_queue, out_queue, handler_process_func, task_type):
 
 # initializes the worker node, instantiates handlers, and starts the priority polling loop
 def main():
-    print(" [WORKER] Nodo inizializzato e in attesa di task...")
+    print(" [WORKER] Node initialized, waiting for tasks...")
     config = load_config()
 
     aws = WorkerAWSManager(config)
@@ -67,7 +67,7 @@ def main():
             time.sleep(2)
 
         except Exception as e:
-            print(f" [SYSTEM ERROR] Loop principale interrotto: {e}")
+            print(f" [SYSTEM ERROR] Principal loop ended: {e}")
             time.sleep(10)
 
 if __name__ == "__main__":

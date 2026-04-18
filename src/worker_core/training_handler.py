@@ -18,7 +18,7 @@ class TrainingHandler:
         job_id, task_id = task_data['job_id'], task_data['task_id']
         dataset_uri = task_data['dataset_s3_path']
 
-        print(f" [TRAIN] Avvio {task_id}. Download {task_data['num_rows']} righe...")
+        print(f" [TRAIN] Starting {task_id}. Downloading {task_data['num_rows']} rows...")
 
         # 1. perform zero-waste ram partial reading of the dataset from s3
         skip = task_data.get('skip_rows', 0)
@@ -30,7 +30,7 @@ class TrainingHandler:
         if task_data.get("is_custom"):
             target_col = task_data.get("custom_target_col")
             if target_col not in df.columns:
-                raise ValueError(f"Colonna Target '{target_col}' non trovata!")
+                raise ValueError(f"Target column '{target_col}' not found!")
 
             # separate features and target for custom datasets
             X = df.drop(columns=[target_col]).fillna(0)

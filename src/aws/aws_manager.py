@@ -74,7 +74,7 @@ class AWSManager:
         chunks = [f"s3://{bucket}/{obj['Key']}" for obj in resp.get('Contents', []) if obj['Key'].endswith('.joblib')]
 
         if not chunks:
-            print(f" [WARNING S3] Nessun file .joblib trovato in s3://{bucket}/{prefix}")
+            print(f" [WARNING S3] No file .joblib found on s3://{bucket}/{prefix}")
 
         return chunks
 

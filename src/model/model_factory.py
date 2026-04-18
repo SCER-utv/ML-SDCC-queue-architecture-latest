@@ -15,7 +15,7 @@ class ModelFactory:
         metadata = config.get("dataset_registry", {})
 
         if dataset_name not in metadata:
-            raise ValueError(f"Dataset '{dataset_name}' non trovato nel config.json! Aggiungilo prima di procedere.")
+            raise ValueError(f"Dataset '{dataset_name}' not found in config.json! Add before proceed.")
 
         # extract the machine learning task type and target column name
         ds_info = metadata[dataset_name]
@@ -28,4 +28,4 @@ class ModelFactory:
         elif task_type == 'regression':
             return RegressionModel(target_column=target_col)
         else:
-            raise ValueError(f"Tipo di task '{task_type}' non supportato. Usa 'classification' o 'regression'.")
+            raise ValueError(f"Task type '{task_type}' not supported. Use 'classification' or 'regression'.")

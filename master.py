@@ -74,7 +74,7 @@ def resolve_paths(job_data, config):
 
 # initializes components and starts the main event loop to orchestrate client jobs
 def main():
-    print(" [MASTER] Inizializzazione componenti in corso...")
+    print(" [MASTER] Components initialization...")
     config = load_config()
 
     aws = AWSManager(config)
@@ -83,7 +83,7 @@ def main():
     inferencer = InferencePipeline(aws, evaluator)
 
     CLIENT_QUEUE_URL = config["sqs_queues"]["client"]
-    print(" [MASTER] Sistema pronto. In ascolto per nuovi Job dei Client...")
+    print(" [MASTER] System ready. Listening for new Jobs from client...")
 
     while True:
         response = aws.sqs_client.receive_message(QueueUrl=CLIENT_QUEUE_URL, MaxNumberOfMessages=1, WaitTimeSeconds=20)
@@ -97,7 +97,7 @@ def main():
             mode = raw_job_data.get('mode', 'train')
             job_id = raw_job_data['job_id']
 
-            print(f"\n{'=' * 50}\n AVVIO PIPELINE: {job_id} (Mode: {mode})\n{'=' * 50}")
+            print(f"\n{'=' * 50}\n STARTING PIPELINE: {job_id} (Mode: {mode})\n{'=' * 50}")
 
             # securely resolve and assign authoritative s3 paths
             job_data = resolve_paths(raw_job_data, config)

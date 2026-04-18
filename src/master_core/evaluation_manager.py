@@ -34,7 +34,7 @@ class EvaluationManager:
             df_test = pd.read_csv(test_s3_uri, usecols=[target_col])
             y_true = df_test[target_col].values
         except Exception as e:
-            print(f" [CRITICAL ERROR] Fallito il caricamento Test Set: {e}")
+            print(f" [CRITICAL ERROR] Test set loading failure: {e}")
             return
 
         # routes to the appropriate evaluation logic based on task type
@@ -66,7 +66,7 @@ class EvaluationManager:
             os.remove(local_path)
 
         if not predictions_list:
-            print(" [CRITICAL ERROR] Nessun risultato scaricato. Impossibile aggregare.")
+            print(" [CRITICAL ERROR] No result downloaded. Impossible to aggregate")
         return predictions_list
 
     # evaluates classification tasks using majority voting

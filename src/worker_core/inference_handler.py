@@ -33,7 +33,7 @@ class InferenceHandler:
             return {"tipo": "singolo", "valore": all_pred}
 
         # case b: bulk inference processing the full test dataset in memory-efficient chunks
-        print(f" [INFER] Bulk inference avviata (Chunksize: {self.chunk_size})")
+        print(f" [INFER] Bulk inference started (Chunksize: {self.chunk_size})")
         start_time = time.time()
         all_predictions = []
 
@@ -55,7 +55,7 @@ class InferenceHandler:
             gc.collect()
 
         numpy_results = np.concatenate(all_predictions)
-        print(f" [INFER] {len(numpy_results)} predizioni in {time.time() - start_time:.2f}s")
+        print(f" [INFER] {len(numpy_results)} predictions in {time.time() - start_time:.2f}s")
 
         # compress, save locally as a numpy array, and upload back to s3
         local_npy_path = f"/tmp/results_{job_id}_{task_id}.npy"

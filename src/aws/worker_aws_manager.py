@@ -36,7 +36,7 @@ class WorkerAWSManager:
                 QueueUrl=queue_url, ReceiptHandle=receipt_handle, VisibilityTimeout=0
             )
         except Exception as e:
-            print(f" [FAULT TOLERANCE] Impossible rilasciare il messaggio: {e}")
+            print(f" [FAULT TOLERANCE] Impossible message release: {e}")
 
     # launches a background thread to continually renew the sqs visibility timeout
     def start_heartbeat(self, queue_url, receipt_handle, stop_event):
@@ -48,7 +48,7 @@ class WorkerAWSManager:
                         self.sqs.change_message_visibility(
                             QueueUrl=queue_url, ReceiptHandle=receipt_handle, VisibilityTimeout=60
                         )
-                        print(" [HEARTBEAT] Visibilità SQS estesa di 60s.")
+                        print(" [HEARTBEAT] SQS visibility extended to 60s.")
                     except:
                         pass
 

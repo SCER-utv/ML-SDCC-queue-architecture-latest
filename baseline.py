@@ -115,7 +115,7 @@ def main():
     # iterates over each target dataset to perform baseline benchmarking
     for dataset in TARGET_DATASETS:
         print("\n" + "*" * 50)
-        print(f" INIZIO ELABORAZIONE DATASET: {dataset.upper()}")
+        print(f" STARTING DATASET ELABORATION: {dataset.upper()}")
         print("*" * 50)
 
         try:
@@ -146,7 +146,7 @@ def main():
             try:
                 params = GOLD_STANDARD_PARAMS[dataset][trees].copy()
             except KeyError:
-                print(f" [WARNING] Nessun parametro per {trees} alberi su {dataset}. Salto.")
+                print(f" [WARNING] No parameter for {trees} trees on {dataset}. Skipping.")
                 continue
 
             # inject runtime parameters
@@ -226,13 +226,13 @@ def main():
             save_baseline_metrics(dataset, trees, train_time, infer_time, metrics_dict, config)
 
         # force garbage collection to free ram before loading the next dataset
-        print(f"\n [CLEANUP] Rilascio la memoria usata dal dataset {dataset.upper()}...")
+        print(f"\n [CLEANUP] Realeasing only memory used by dataset {dataset.upper()}...")
         del df_train
         del df_test
         del y_true
         gc.collect()
 
-    print("\n [SUCCESS] Tutte le Baseline sono state completate con successo!")
+    print("\n [SUCCESS] All baselines completed successfully!")
 
 
 if __name__ == "__main__":

@@ -148,10 +148,10 @@ class InferencePipeline:
             try:
                 num_trees = int(trees_part.replace('trees', ''))
             except ValueError:
-                print(f" [WARNING] Formato alberi non valido in '{trees_part}'. Uso fallback.")
+                print(f" [WARNING] Invalid tree format in '{trees_part}'. Using fallback.")
                 num_trees = num_workers * 25
         else:
-            print(f" [WARNING] Parola 'trees' non trovata nell'ID modello. Uso fallback.")
+            print(f" [WARNING] 'trees' word not found in model ID. Using fallback.")
             num_trees = num_workers * 25
 
         if "heterogeneous" in target_model:
@@ -165,7 +165,7 @@ class InferencePipeline:
             for i in range(num_workers)
         ]
 
-        print(f" [RESOLVER] Modello: {strat.upper()} | Alberi Totali: {num_trees} | Pesi: {weights}")
+        print(f" [RESOLVER] Model: {strat.upper()} | total trees: {num_trees} | Weights: {weights}")
 
         return num_trees, weights, strat
 
@@ -196,7 +196,7 @@ class InferencePipeline:
                         worker_predictions = res_data['valore']
                         total_received_votes.extend(worker_predictions)
                         read_messages += 1
-                        print(f"   -> Gathered {len(worker_predictions)} votes from worker_core.")
+                        print(f"   -> Gathered {len(worker_predictions)} votes from worker.")
 
                     self.aws.sqs_client.delete_message(QueueUrl=infer_resp_queue, ReceiptHandle=msg['ReceiptHandle'])
 
