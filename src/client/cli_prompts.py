@@ -189,7 +189,7 @@ class CLI:
 
         print("\n Select Training Strategy:")
         print("  1) Homogeneous  [Same parameters for all workers]")
-        print("  2) Heterogeneous [Different parameters per worker_core, variance boosting]")
+        print("  2) Heterogeneous [Different parameters per worker, variance boosting]")
         while True:
             strat_choice = input(" Enter 1 or 2: ").strip()
             if strat_choice in ['1', '2']:
@@ -224,31 +224,48 @@ class CLI:
                 else:
                     print("\n --- Configuring Global Parameters ---")
 
+                # MAX DEPTH (int or None)
                 raw_depth = input(" Max Depth (int, or blank for None): ").strip()
-                max_depth = int(raw_depth) if raw_depth.isdigit() else "None"
+                max_depth = int(raw_depth) if raw_depth.isdigit() else None
 
-                raw_split = input(" Min Samples Split (int, default: 2): ").strip()
-                min_samples_split = int(raw_split) if raw_split.isdigit() else 2
+                # MIN SAMPLES SPLIT (int or float)
+                raw_split = input(" Min Samples Split (int or float, default: 2): ").strip()
+                try:
+                    min_samples_split = float(raw_split) if '.' in raw_split else int(raw_split)
+                except ValueError:
+                    min_samples_split = 2
 
-                raw_leaf = input(" Min Samples Leaf (int, default: 1): ").strip()
-                min_samples_leaf = int(raw_leaf) if raw_leaf.isdigit() else 1
+                # MIN SAMPLES LEAF (int or float)
+                raw_leaf = input(" Min Samples Leaf (int or float, default: 1): ").strip()
+                try:
+                    min_samples_leaf = float(raw_leaf) if '.' in raw_leaf else int(raw_leaf)
+                except ValueError:
+                    min_samples_leaf = 1
 
-                raw_features = input(" Max Features ['sqrt', 'log2', or float < 1.0] (Default: sqrt): ").strip()
-                if not raw_features:
+                # MAX FEATURES ('sqrt', 'log2', float, or None)
+                raw_features = input(
+                    " Max Features ['sqrt', 'log2', float < 1.0, or blank for None] (Default: sqrt): ").strip()
+                if not raw_features or raw_features == "sqrt":
                     max_features = "sqrt"
-                elif raw_features in ["sqrt", "log2", "None"]:
-                    max_features = raw_features
+                elif raw_features == "log2":
+                    max_features = "log2"
+                elif raw_features.lower() == "none":
+                    max_features = None
                 else:
                     try:
-                        max_features = str(float(raw_features))
+                        max_features = float(raw_features)
                     except ValueError:
                         max_features = "sqrt"
 
-                raw_samples = input(" Max Samples per Tree [0.1 - 1.0] (Default: 1.0): ").strip()
-                try:
-                    max_samples = str(float(raw_samples)) if raw_samples else "1.0"
-                except ValueError:
-                    max_samples = "1.0"
+                # MAX SAMPLES (float or None)
+                raw_samples = input(" Max Samples per Tree [0.1 - 1.0, or blank for None] (Default: 1.0): ").strip()
+                if raw_samples.lower() == "none":
+                    max_samples = None
+                else:
+                    try:
+                        max_samples = float(raw_samples)
+                    except ValueError:
+                        max_samples = 1.0
 
                 criterion = input(" Criterion [gini, entropy, squared_error] (Leave blank for default): ").strip()
                 if not criterion:
