@@ -137,6 +137,20 @@ class TrainingPipeline:
         trees_remainder = num_trees_total % num_workers
         current_skip = 0
 
+        """
+        # ==========================================================
+        # TEST 1.3 (CRASH BEFORE SENDING train_tasks)
+        # ==========================================================
+        print("\n" + "!"*50)
+        print(" [TEST 1.3] VULNERABILITY WINDOW OPEN")
+        print(" [TEST 1.3] You have 15 seconds to kill the Master!")
+        print(" [TEST 1.3] Run: sudo docker restart master-node")
+        print("!"*50 + "\n")
+
+        time.sleep(15)
+        # ==========================================================
+        """
+
         print(f" [INFO] Distributing {num_trees_total} trees across {num_workers} training tasks...")
         for i in range(num_workers):
             trees = trees_per_worker + (1 if i < trees_remainder else 0)
@@ -181,6 +195,19 @@ class TrainingPipeline:
             current_skip += n_rows
             self.aws.sqs_client.send_message(QueueUrl=self.config["sqs_queues"]["train_task"], MessageBody=json.dumps(task_payload))
             print(f" Enqueued {task_payload['task_id']} ({trees} trees).")
+
+            """
+            # ==========================================================
+            # TEST 1.5 (CRASH MID FAN-OUT)
+            # ==========================================================
+            if i == (num_workers // 2) - 1:  # Pauses exactly halfway through the workers
+                print("\n" + "!"*50)
+                print(f" [TEST 1.5] FAN-OUT INTERRUPTED HALFWAY! Sent {i+1} out of {num_workers} tasks.")
+                print(" [TEST 1.5] You have 15 seconds to kill the Master before it finishes sending")
+                print("!"*50 + "\n")
+                time.sleep(15)
+            # ==========================================================
+            """
 
     # polls the sqs response queue until all workers complete their training tasks
     def _wait_for_workers(self, job_id, num_workers, completed_train_tasks, start_train, tasks_dispatched):

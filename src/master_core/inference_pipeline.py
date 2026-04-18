@@ -69,6 +69,18 @@ class InferencePipeline:
         inference_pure_start = time.time()
         self._dispatch_realtime_tasks(job_data, job_id, dataset, model_s3_uris, tuple_data)
 
+        """
+        # ==========================================================
+        # TEST 3.3 (MASTER CRASH IN INFERENCE REAL-TIME)
+        # ==========================================================
+        print("\n" + "!"*50)
+        print(" [TEST 3.3] TASKS SENT TO WORKERS. WAITING FOR RESPONSES...")
+        print(" [TEST 3.3] You have 15 seconds to restart the Master!")
+        print("!"*50 + "\n")
+        time.sleep(15)
+        # ==========================================================
+        """
+
         # 3. rapidly gather votes from memory
         total_received_votes, pure_inference_time = self._wait_for_realtime_workers(num_workers, inference_pure_start)
 

@@ -20,6 +20,23 @@ class InferenceHandler:
         job_id, task_id = task_data['job_id'], task_data['task_id']
         bucket, model_key = self.aws.parse_s3_uri(task_data['model_s3_uri'])
 
+        """
+        # ==========================================================
+        # TEST 2.1 (WORKER HARD CRASH DURING INFERENCE)
+        # ==========================================================
+        print(f" [TEST PHASE 2] Starting inference for {task_id}. 15-second pause...")
+        time.sleep(15)
+        """
+
+        """
+        # ==========================================================
+        # TEST 2.2 (WORKER SOFT CRASH DURING INFERENCE)
+        # ==========================================================
+        # if task_id == "task_2":
+        #     raise MemoryError("SOFT CRASH SIMULATION DURING INFERENCE - OUT OF MEMORY")
+        # ==========================================================
+        """
+
         # download the assigned partial model from s3 into temporary storage
         local_model_path = f"/tmp/model_{job_id}_{task_id}.joblib"
         self.aws.s3.download_file(bucket, model_key, local_model_path)
@@ -28,6 +45,34 @@ class InferenceHandler:
 
         # case a: real-time inference for a single data tuple
         if 'tuple_data' in task_data:
+            print(f" [INFER] Single tuple real-time prediction in progress...")
+
+            """
+            # ==========================================================
+            # TEST 3.1 (WORKER HARD CRASH IN SINGLE INFERENCE)
+            # ==========================================================
+            print("\n" + "!"*50)
+            print(" [TEST 3.1] REAL-TIME INFERENCE STARTED!")
+            print(" [TEST 3.1] You have 15 seconds to kill THIS Worker")
+            print("!"*50 + "\n")
+            time.sleep(15)
+            # ==========================================================
+            """
+
+            """
+            # ==========================================================
+            # TEST 3.2 (WORKER SOFT CRASH IN SINGLE INFERENCE)
+            # ==========================================================
+            # If this is task 1, simulate a Python error
+            if task_data['task_id'] == "task_infer_rt_1":
+                print(" [TEST 3.2] Simulating Python exception...")
+                raise ValueError("SIMULATED SOFT CRASH: Corrupted tuple data!")
+            # ==========================================================
+            """
+
+
+
+
             data_array = np.array(task_data['tuple_data']).reshape(1, -1)
             all_pred = [float(tree.predict(data_array)[0]) for tree in rf.estimators_]
             return {"tipo": "singolo", "valore": all_pred}
