@@ -30,6 +30,7 @@ The `master.py` file acts as the orchestrator of the system. It is a persistent 
     4. **Mathematical Fan-Out:** Calculates the optimal workload distribution (trees and rows per worker), applies the specified hyperparameter strategy (Homogeneous/Heterogeneous), and dispatches individual JSON micro-tasks to the `train_task` SQS queue.
     5. **Active Event Loop:** Continuously polls the `train_response` SQS queue for worker Acknowledgements (ACKs), updating the persistent DynamoDB state as `.joblib` artifacts are uploaded to S3.
     6. **Closure:** Once all workers report success, it calculates execution metrics and notifies the Client, or seamlessly passes the baton to the `InferencePipeline` for End-to-End evaluation jobs.
+
    
   * **The Inference Pipeline Workflow:** If the job entails testing a model, this orchestrator takes over. It handles two completely different execution paths based on the requested operation mode:
     * **Bulk Inference (Massive Test Set Evaluation):**
