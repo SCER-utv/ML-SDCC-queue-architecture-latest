@@ -65,14 +65,14 @@ This component acts as the entry point and task router for the worker instance. 
 
 #### B. The Training Handler (`TrainingHandler`)
 When the main loop routes a training task, this handler is invoked to build a specific portion of the overall Random Forest.
-* **Zero-Waste RAM Data Loading:** The handler receives specific instructions (`skip_rows`, `num_rows`) from the Master. Instead of downloading the entire massive dataset from S3, it leverages pandas' partial reading capabilities to fetch *only* the exact subset of rows it has been assigned, drastically reducing RAM consumption and network overhead.
-* **Dynamic Model Building (Custom Dataset):** It dynamically constructs a raw Scikit-Learn `RandomForestClassifier` or `RandomForestRegressor` using the hyperparameters passed in the SQS payload. It seamlessly identifies and isolates the user-defined target column.
-* **Dynamic Model Building (Preconfigured Dataset):** It delegates the setup to the `ModelFactory`, ensuring strict adherence to the benchmark rules.
-* **Artifact Serialization:** Once the sub-forest is trained (`rf.fit`), the handler serializes the model into a `.joblib` file, temporarily saves it to the local `/tmp/` directory, uploads it to S3, and notifies the Master via the `train_response` SQS queue.
+1. **Zero-Waste RAM Data Loading:** The handler receives specific instructions (`skip_rows`, `num_rows`) from the Master. Instead of downloading the entire massive dataset from S3, it leverages pandas' partial reading capabilities to fetch *only* the exact subset of rows it has been assigned, drastically reducing RAM consumption and network overhead.
+2. **Dynamic Model Building (Custom Dataset):** It dynamically constructs a raw Scikit-Learn `RandomForestClassifier` or `RandomForestRegressor` using the hyperparameters passed in the SQS payload. It seamlessly identifies and isolates the user-defined target column.
+3. **Dynamic Model Building (Preconfigured Dataset):** It delegates the setup to the `ModelFactory`, ensuring strict adherence to the benchmark rules.
+4. **Artifact Serialization:** Once the sub-forest is trained (`rf.fit`), the handler serializes the model into a `.joblib` file, temporarily saves it to the local `/tmp/` directory, uploads it to S3, and notifies the Master via the `train_response` SQS queue.
 
 #### C. The Inference Handler (`InferenceHandler`)
 When an inference task is routed, this handler is responsible for utilizing a previously saved `.joblib` artifact to generate predictions. It handles execution paths similarly to the Master's logic:
-* **Model Fetching:** Regardless of the mode, the very first step is securely downloading the worker's assigned `.joblib` model chunk from S3 into its local environment and loading it into memory.
+1. **Model Fetching:** Regardless of the mode, the very first step is securely downloading the worker's assigned `.joblib` model chunk from S3 into its local environment and loading it into memory.
 * **Path 1: Real-Time Inference:** If the SQS payload contains a `tuple_data` array (meaning a user requested an immediate prediction for a single row), the handler reshapes the data, feeds it to the local sub-forest, and instantly returns an array of the individual tree votes back to the Master.
 * **Path 2: Bulk Inference (Memory-Safe Chunking):** If the payload requires evaluating an entire test dataset, the handler employs extreme memory conservation tactics. It streams the dataset from S3 in strictly sized blocks (e.g., `chunksize=500000` rows). After predicting a chunk, it explicitly invokes Python's Garbage Collector (`gc.collect()`) to flush the RAM before loading the next chunk. Finally, it concatenates all chunk predictions into a highly compressed `.npy` (Numpy) file, uploads it to S3, and sends the S3 URI back to the Master for final aggregation.
 
