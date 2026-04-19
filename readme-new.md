@@ -44,10 +44,36 @@ The `master.py` file acts as the orchestrator of the system. It is a persistent 
       2. **Rapid In-Memory Polling:** Swiftly gathers the individual tree votes directly from the SQS response messages (avoiding S3 file I/O overhead to minimize latency).
       3. **Consensus Aggregation:** Computes the final prediction instantly (Majority Vote for classification, Mean for regression) and routes the precise prediction and system latency metrics directly back to the Client's CLI.
 
-### 3. The Worker Node (The Compute Engine)
-The `worker.py` file represents the pure computational node, designed to be completely *stateless* and horizontally scalable via EC2 Auto Scaling Groups.
-* **Priority Polling:** The main event loop implements a strict priority queue system. The Worker always polls the Training queue first. Only if no training tasks are available does it proceed to check the Inference queue, guaranteeing that bulk inference tasks never block the training of a new model.
-* **Resilience & Immediate NACK:** Every task is wrapped in `try/except` blocks and monitored by an isolated Heartbeat thread. On an Out-of-Memory (OOM) error or logical exception, the worker catches it and executes an immediate release (`VisibilityTimeout=0`), allowing a healthy node to pick up the task instantly.
+## ⚙️ The Worker Node: A Deep Dive
+
+The Worker Node represents the pure computational engine of the distributed system. It is designed to be completely **stateless**, meaning it holds no permanent data and can be spun up or terminated at any time by the AWS Auto Scaling Group without affecting the system's integrity. 
+
+The Worker code is logically divided into three main components: the Main Event Loop, the Training Handler, and the Inference Handler.
+
+### 1. The Main Event Loop & Resilience (`worker.py`)
+This component acts as the entry point and task router for the worker instance. It continuously listens to the SQS queues and guarantees that the system remains responsive and fault-tolerant.
+
+* **Priority Polling:** The worker does not treat all tasks equally. It implements a strict priority system where it polls the `train_task` queue first. Only if the training queue is completely empty will it check the `infer_task` queue. This guarantees that massive bulk inference evaluations never block the creation of a new model.
+* **Dynamic Heartbeat:** As soon as a task is picked up, the worker spawns an isolated background thread (`start_heartbeat`). This thread automatically pings AWS SQS every 20 seconds to extend the `VisibilityTimeout` of the message. This tells the queue: *"I am still alive and actively working on this, do not assign it to anyone else."*
+* **Fault Tolerance (Immediate NACK):** Every task execution is wrapped in a `try/except` block. If the worker encounters a critical error (such as an Out-Of-Memory crash or corrupted data), it catches the exception and immediately triggers `release_message`. This sets the SQS visibility timeout to 0, instantly returning the task to the queue so a healthy worker can pick it up without waiting for a timeout.
+
+### 2. The Training Handler (`TrainingHandler`)
+When the main loop routes a training task, this handler is invoked to build a specific portion of the overall Random Forest.
+
+* **Zero-Waste RAM Data Loading:** The handler receives specific instructions (`skip_rows`, `num_rows`) from the Master. Instead of downloading the entire massive dataset from S3, it leverages pandas' partial reading capabilities to fetch *only* the exact subset of rows it has been assigned. This drastically reduces RAM consumption and network overhead.
+* **Dynamic Model Building:** * If processing a **Custom Dataset**, it dynamically constructs a raw Scikit-Learn `RandomForestClassifier` or `RandomForestRegressor` using the hyperparameters passed in the SQS payload. It seamlessly identifies and isolates the user-defined target column.
+  * If processing a **Preconfigured Dataset** (Gold Standard), it delegates the setup to the `ModelFactory`, ensuring strict adherence to the benchmark rules.
+* **Artifact Serialization:** Once the sub-forest is trained (`rf.fit`), the handler serializes the model into a `.joblib` file, temporarily saves it to the local `/tmp/` directory, uploads it to S3, and notifies the Master via the `train_response` SQS queue.
+
+### 3. The Inference Handler (`InferenceHandler`)
+When an inference task is routed, this handler is responsible for utilizing a previously saved `.joblib` artifact to generate predictions. It handles two completely different execution paths:
+
+* **Model Fetching:** Regardless of the mode, the very first step is securely downloading the worker's assigned `.joblib` model chunk from S3 into its local environment and loading it into memory.
+* **Path A: Real-Time Inference:** If the SQS payload contains a `tuple_data` array (meaning a user requested an immediate prediction for a single row), the handler reshapes the data, feeds it to the local sub-forest, and instantly returns an array of the individual tree votes back to the Master.
+* **Path B: Bulk Inference (Memory-Safe Chunking):** If the payload requires evaluating an entire test dataset, the handler employs extreme memory conservation tactics. 
+  * It streams the dataset from S3 in strictly sized blocks (e.g., `chunksize=500000` rows).
+  * After predicting a chunk, it explicitly invokes Python's Garbage Collector (`gc.collect()`) to flush the RAM before loading the next chunk.
+  * Finally, it concatenates all chunk predictions into a highly compressed `.npy` (Numpy) file, uploads it to S3, and sends the S3 URI back to the Master for final aggregation.
 
 ---
 
