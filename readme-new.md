@@ -1,6 +1,6 @@
 # Distributed Random Forest on AWS 
 
-This project implements a **Cloud-Native** architecture for the distributed training and inference of Random Forest machine learning models. It aims to get better performance in terms of execution time, compared to a system running on a single node, while keeping almost the same accuracy in terms of metrics evaluated.
+This project implements a **Cloud-Native** architecture for the distributed training and inference of Random Forest machine learning models. It aims to get better performance in terms of execution time, compared to a system running on a single node, while keeping almost the same performance in terms of metrics evaluated.
 
 *Project developed for ML+SDCC 2025/26*
 
@@ -8,21 +8,28 @@ This project implements a **Cloud-Native** architecture for the distributed trai
 
 ## Architecture and System Components
 
-The system is built on a highly decoupled microservices architecture. Communication between components occurs exclusively via asynchronous message exchange over **Amazon SQS**, while heavy data (datasets and model weights) are stored in **Amazon S3**.
+The system is built on a highly decoupled architecture, based on master-worker pattern. Communication between components occurs exclusively via asynchronous message exchange over **Amazon SQS**, while heavy data (datasets and model weights) are stored in **Amazon S3**.
 
 ![Training architecture Diagram](images/training_architecture.drawio.pdf) 
 ![Inference architecture Diagram](images/inference_architecture.drawio.pdf) 
 
 ### 1. The Client (User Interface)
-The `client.py` file exposes an interactive CLI that guides the user through configuring the cluster and the Machine Learning job. Its primary purpose is to abstract the underlying cloud infrastructure complexity from the end user.
-* **Thin Payload Contract:** Upon completing the configuration, the Client does not process any raw data. Instead, it builds a compact JSON dictionary (the *Thin Payload*) containing the user's intentions (number of trees, compute nodes, custom or gold standard hyperparameters, target column). This contract is dispatched to the Master node via SQS.
+The `client.py` file exposes an interactive CLI that guides the user through configuration of the cluster and the Machine Learning job. Its primary purpose is to abstract the underlying cloud infrastructure complexity from the end user.
+* **Job Contract:** Upon completing the configuration, the client builds a JSON dictionary containing the user's intentions. This job contract is dispatched to the Master node via SQS.
 * **Dynamic Inference Management:** During Real-Time inference requests, the Client fetches the dataset header "on-the-fly" from S3 to validate user input, ensuring the provided tuple perfectly matches the format expected by the distributed model.
 
 ### 2. The Master Node (The Orchestrator)
-The `master.py` file acts as the "brain" of the system. It is a persistent service constantly listening (via 20-second *Long Polling*) to the main Client queue. Upon receiving a *Thin Payload*, it triggers:
-* **Security & Path Resolution:** Translates the Client's intentions into concrete and secure S3 URLs, isolating Custom data experiments to prevent data manipulation by Workers.
-* **Master Heartbeat:** Spawns a dedicated background thread that cyclically renews the SQS message visibility for the Client's request, preventing duplicate Master nodes from picking up the same long-running ML job.
-* **Dynamic Routing:** Depending on the requested mode, the Master routes the job to the specific pipeline orchestrator (`TrainingPipeline` or `InferencePipeline`) for the *Fan-Out* of micro-tasks to the Worker queues.
+The `master.py` file acts as the orchestrator of the system. It is a persistent service constantly listening to the main Client queue. Upon receiving a *Job*, it triggers:
+* **Security & Path Resolution:** Translates the Client's intentions into concrete and secure S3 URLs, isolating Custom data experiments from pre-configured data experiments.
+* **Master Heartbeat:** Spawns a background thread that renews the SQS message visibility for the Client's request, preventing duplicate Master nodes from picking up the same long-running ML job.
+* **Pipeline handlers:** Depending on the requested mode, the Master routes the job to the specific pipeline handler (`TrainingPipeline` or `InferencePipeline`).
+  *  **The Training Pipeline Workflow:** When a distributed training job is triggered, the Master executes a strict orchestration sequence:
+    1. **Fault Tolerance & State Recovery:** Queries DynamoDB to check if the job is new or recovering from a previous Master crash, allowing the system to resume gracefully without restarting from scratch.
+    2. **Infrastructure Provisioning:** Dynamically updates the AWS Auto Scaling Group (ASG) capacity to match the exact number of workers requested.
+    3. **Zero-Waste Data Split:** If a custom dataset requires splitting, the Master streams it line-by-line from S3, probabilistically routing rows into Train/Test files directly back to S3 to bypass physical RAM limits.
+    4. **Mathematical Fan-Out:** Calculates the optimal workload distribution (trees and rows per worker), applies the specified hyperparameter strategy (Homogeneous/Heterogeneous), and dispatches individual JSON micro-tasks to the `train_task` SQS queue.
+    5. **Active Event Loop:** Continuously polls the `train_response` SQS queue for worker Acknowledgements (ACKs), updating the persistent DynamoDB state as `.joblib` artifacts are uploaded to S3.
+    6. **Closure:** Once all workers report success, it calculates execution metrics and notifies the Client, or seamlessly passes the baton to the `InferencePipeline` for End-to-End evaluation jobs.
 
 ### 3. The Worker Node (The Compute Engine)
 The `worker.py` file represents the pure computational node, designed to be completely *stateless* and horizontally scalable via EC2 Auto Scaling Groups.
