@@ -30,6 +30,18 @@ The `master.py` file acts as the orchestrator of the system. It is a persistent 
     4. **Mathematical Fan-Out:** Calculates the optimal workload distribution (trees and rows per worker), applies the specified hyperparameter strategy (Homogeneous/Heterogeneous), and dispatches individual JSON micro-tasks to the `train_task` SQS queue.
     5. **Active Event Loop:** Continuously polls the `train_response` SQS queue for worker Acknowledgements (ACKs), updating the persistent DynamoDB state as `.joblib` artifacts are uploaded to S3.
     6. **Closure:** Once all workers report success, it calculates execution metrics and notifies the Client, or seamlessly passes the baton to the `InferencePipeline` for End-to-End evaluation jobs.
+   
+  * **The Inference Pipeline Workflow:** If the job entails testing a model, this orchestrator takes over. It handles two completely different execution paths based on the requested operation mode:
+    * **Bulk Inference (Massive Test Set Evaluation):**
+      1. **Model Discovery & Provisioning:** Scans S3 to count how many `.joblib` chunks the target distributed model consists of, and scales the AWS Auto Scaling Group to match this exact number.
+      2. **State Recovery:** Retrieves historical training times and the current evaluation state from DynamoDB to ensure fault tolerance.
+      3. **Fan-Out Dispatch:** Dispatches targeted JSON payloads via SQS, instructing each worker to download a specific model chunk and evaluate the entire test dataset.
+      4. **Active Event Loop:** Actively polls the SQS response queue, waiting for workers to upload their temporary `.npy` prediction arrays to S3.
+      5. **Smart Weighted Aggregation:** Intelligently parses the target Model ID to extract the exact number of trees and the hyperparameter strategy used. It calculates precise weights for each worker and delegates the final aggregation (Majority Voting or Weighted Averaging) to the `EvaluationManager`.
+    * **Real-Time Inference (Ultra-Low Latency):**
+      1. **Broadcast Dispatch:** Bypasses heavy S3 dataset operations entirely. It embeds the user's single data tuple directly into the SQS payload and broadcasts it to all workers.
+      2. **Rapid In-Memory Polling:** Swiftly gathers the individual tree votes directly from the SQS response messages (avoiding S3 file I/O overhead to minimize latency).
+      3. **Consensus Aggregation:** Computes the final prediction instantly (Majority Vote for classification, Mean for regression) and routes the precise prediction and system latency metrics directly back to the Client's CLI.
 
 ### 3. The Worker Node (The Compute Engine)
 The `worker.py` file represents the pure computational node, designed to be completely *stateless* and horizontally scalable via EC2 Auto Scaling Groups.
