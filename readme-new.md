@@ -84,29 +84,19 @@ When an inference task is routed, this handler is responsible for utilizing a pr
 
 ## System Capabilities & Operation Modes
 
-The system abstracts the complexity of distributed computing through a highly interactive CLI, allowing users to orchestrate the entire lifecycle of a Machine Learning model. It supports both **Classification** and **Regression** tasks through four distinct operation modes:
+The system abstracts the complexity of distributed computing through a highly interactive CLI, empowering users to orchestrate the entire lifecycle of both **Classification** and **Regression** models. Rather than focusing on infrastructure management, users can directly leverage four distinct, high-level operation modes:
 
-### 1. Distributed Training
-The system parallelizes the training of a Random Forest across multiple EC2 Worker nodes. 
-* **Mathematical Fan-Out:** The Master dynamically calculates the optimal distribution of trees (`n_estimators` / `num_workers`), assigning the remainder to the first available nodes. 
-* **Zero-Waste RAM:** Workers do not load the entire dataset. The Master instructs each worker on the exact row range (`skip_rows`, `num_rows`) to fetch from S3.
-* **Artifact Generation:** Each worker trains its assigned sub-forest and serializes it as an independent `.joblib` artifact securely stored on S3.
+### 1. Distributed Training (Training Only)
+Allows users to train large-scale Random Forest models across a distributed cluster of EC2 instances. Instead of being bottlenecked by a single machine's computational limits, the system horizontally parallelizes the workload. The result is a powerful, globally distributed model consisting of multiple independent `.joblib` sub-forests safely stored on S3, ready for future use.
 
 ### 2. End-to-End Pipeline (Train + Auto-Evaluate)
-A continuous, fully automated workflow ideal for rapid prototyping and academic benchmarking.
-* The system sequentially chains the Distributed Training phase and the Bulk Inference phase. 
-* Once training is complete, the Master immediately tasks the workers to evaluate the newly created distributed model against a hold-out Test Set.
-* The pipeline culminates with the Master calculating and persisting global evaluation metrics (e.g., ROC-AUC, F1-Score, RMSE, MAPE) in both CSV (for historical tracking) and JSON formats.
+A fully automated, continuous workflow designed specifically for rapid prototyping and academic benchmarking. It seamlessly chains the Distributed Training phase directly into the Bulk Inference phase. Users can submit a job and walk away; the system will build the distributed model, test it against a hold-out dataset, and immediately output comprehensive evaluation metrics (such as ROC-AUC, F1-Score, RMSE, and MAPE) in both CLI and persistent CSV/JSON logs.
 
 ### 3. Bulk Inference (Massive Test Set Evaluation)
-Designed to evaluate previously trained distributed models against massive datasets that exceed the memory capacity of a single machine.
-* **Memory-Safe Chunking:** Workers stream the test dataset from S3 in strictly defined block sizes (e.g., 500,000 rows at a time). After predicting a chunk, aggressive garbage collection (`gc.collect()`) is enforced to prevent Out-Of-Memory (OOM) crashes.
-* **Smart Aggregation:** Workers upload temporary `.npy` prediction arrays to S3. The Master downloads them and applies task-specific aggregation: **Majority Voting** for classification and **Weighted Averaging** (based on the exact number of trees each worker trained) for regression.
+Enables the evaluation of previously trained distributed models against massive, out-of-core test datasets. This mode is designed to bypass traditional memory constraints entirely. It allows users to point the system to a test file containing millions of rows and receive a highly accurate, globally aggregated evaluation without risking local or cluster-wide Out-Of-Memory crashes.
 
-### 4. Real-Time Inference (Single Tuple Prediction)
-Engineered for ultra-low latency scenarios where an immediate prediction is required for a single data point.
-* The Client automatically fetches the feature headers from the S3 dataset to guide the user's input safely.
-* The tuple is broadcasted to all Workers simultaneously. Workers keep their respective model chunks in fast RAM, predict the outcome, and instantly return their votes to the Master via SQS for sub-second aggregation.
+### 4. Real-Time Inference (Single Prediction)
+Engineered for ad-hoc, on-the-fly predictions requiring ultra-low latency. Users can interactively input a single data point (tuple) directly through the CLI. The system safely guides the input using fetched dataset headers, broadcasts the query to the active compute cluster, and aggregates the consensus (Majority Vote or Mean) in less than a second. It is the perfect tool for instant model querying and interactive testing.
 
 ---
 
