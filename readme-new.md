@@ -98,6 +98,9 @@ Enables the evaluation of previously trained distributed models against massive,
 ### 4. Real-Time Inference (Single Prediction)
 Engineered for ad-hoc, on-the-fly predictions requiring ultra-low latency. Users can interactively input a single data point (tuple) directly through the CLI. The system safely guides the input using fetched dataset headers, broadcasts the query to the active compute cluster, and aggregates the consensus (Majority Vote or Mean) in less than a second. It is the perfect tool for instant model querying and interactive testing.
 
+### 5. Download & Merge Model (Local Export)
+Allows users to export a globally trained distributed model to their local machine for offline use or standalone deployment. The Client automatically fetches all the individual `.joblib` sub-forests from S3, intelligently aggregates their estimators into a single, unified Scikit-Learn Random Forest model, and saves it locally as a `.pkl` file. This effectively bridges the gap between cloud-scale distributed training and edge/local inference.
+
 ---
 
 ## Dataset Management: Preconfigured vs. Custom Workflows
