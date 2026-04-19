@@ -8,7 +8,7 @@ This project implements a **Cloud-Native** architecture for the distributed trai
 
 ## System Capabilities & Operation Modes
 
-The system abstracts the complexity of distributed computing through a highly interactive CLI, empowering users to orchestrate the entire lifecycle of both **Classification** and **Regression** models. Rather than focusing on infrastructure management, users can directly leverage four distinct, high-level operation modes:
+The system abstracts the complexity of distributed computing through a highly interactive CLI, empowering users to orchestrate the entire lifecycle of both **Classification** and **Regression** models. Rather than focusing on infrastructure management, users can directly leverage five distinct, high-level operation modes:
 
 ### 1. Distributed Training (Training Only)
 Allows users to train large-scale Random Forest models across a distributed cluster of EC2 instances. Instead of being bottlenecked by a single machine's computational limits, the system horizontally parallelizes the workload. The result is a powerful, globally distributed model consisting of multiple independent `.joblib` sub-forests safely stored on S3, ready for future use.
