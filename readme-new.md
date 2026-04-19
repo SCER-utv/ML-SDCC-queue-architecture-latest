@@ -6,6 +6,27 @@ This project implements a **Cloud-Native** architecture for the distributed trai
 
 ---
 
+## System Capabilities & Operation Modes
+
+The system abstracts the complexity of distributed computing through a highly interactive CLI, empowering users to orchestrate the entire lifecycle of both **Classification** and **Regression** models. Rather than focusing on infrastructure management, users can directly leverage four distinct, high-level operation modes:
+
+### 1. Distributed Training (Training Only)
+Allows users to train large-scale Random Forest models across a distributed cluster of EC2 instances. Instead of being bottlenecked by a single machine's computational limits, the system horizontally parallelizes the workload. The result is a powerful, globally distributed model consisting of multiple independent `.joblib` sub-forests safely stored on S3, ready for future use.
+
+### 2. End-to-End Pipeline (Train + Auto-Evaluate)
+A fully automated, continuous workflow designed specifically for rapid prototyping and academic benchmarking. It seamlessly chains the Distributed Training phase directly into the Bulk Inference phase. Users can submit a job and walk away; the system will build the distributed model, test it against a hold-out dataset, and immediately output comprehensive evaluation metrics (such as ROC-AUC, F1-Score, RMSE, and MAPE) in both CLI and persistent CSV/JSON logs.
+
+### 3. Bulk Inference (Massive Test Set Evaluation)
+Enables the evaluation of previously trained distributed models against massive, out-of-core test datasets. This mode is designed to bypass traditional memory constraints entirely. It allows users to point the system to a test file containing millions of rows and receive a highly accurate, globally aggregated evaluation without risking local or cluster-wide Out-Of-Memory crashes.
+
+### 4. Real-Time Inference (Single Prediction)
+Engineered for ad-hoc, on-the-fly predictions requiring ultra-low latency. Users can interactively input a single data point (tuple) directly through the CLI. The system safely guides the input using fetched dataset headers, broadcasts the query to the active compute cluster, and aggregates the consensus (Majority Vote or Mean) in less than a second. It is the perfect tool for instant model querying and interactive testing.
+
+### 5. Download & Merge Model (Local Export)
+Allows users to export a globally trained distributed model to their local machine for offline use or standalone deployment. The Client automatically fetches all the individual `.joblib` sub-forests from S3, intelligently aggregates their estimators into a single, unified Scikit-Learn Random Forest model, and saves it locally as a `.pkl` file. This effectively bridges the gap between cloud-scale distributed training and edge/local inference.
+
+---
+
 ## Architecture and System Components
 
 The system is built on a highly decoupled architecture, based on master-worker pattern. Communication between components occurs exclusively via asynchronous message exchange over **Amazon SQS**, while heavy data (datasets and model weights) are stored in **Amazon S3**.
@@ -79,27 +100,6 @@ When an inference task is routed, this handler is responsible for utilizing a pr
 1. **Model Fetching:** Regardless of the mode, the very first step is securely downloading the worker's assigned `.joblib` model chunk from S3 into its local environment and loading it into memory.
 * **Path 1: Real-Time Inference:** If the SQS payload contains a `tuple_data` array (meaning a user requested an immediate prediction for a single row), the handler reshapes the data, feeds it to the local sub-forest, and instantly returns an array of the individual tree votes back to the Master.
 * **Path 2: Bulk Inference (Memory-Safe Chunking):** If the payload requires evaluating an entire test dataset, the handler employs extreme memory conservation tactics. It streams the dataset from S3 in strictly sized blocks (e.g., `chunksize=500000` rows). After predicting a chunk, it explicitly invokes Python's Garbage Collector (`gc.collect()`) to flush the RAM before loading the next chunk. Finally, it concatenates all chunk predictions into a highly compressed `.npy` (Numpy) file, uploads it to S3, and sends the S3 URI back to the Master for final aggregation.
-
----
-
-## System Capabilities & Operation Modes
-
-The system abstracts the complexity of distributed computing through a highly interactive CLI, empowering users to orchestrate the entire lifecycle of both **Classification** and **Regression** models. Rather than focusing on infrastructure management, users can directly leverage four distinct, high-level operation modes:
-
-### 1. Distributed Training (Training Only)
-Allows users to train large-scale Random Forest models across a distributed cluster of EC2 instances. Instead of being bottlenecked by a single machine's computational limits, the system horizontally parallelizes the workload. The result is a powerful, globally distributed model consisting of multiple independent `.joblib` sub-forests safely stored on S3, ready for future use.
-
-### 2. End-to-End Pipeline (Train + Auto-Evaluate)
-A fully automated, continuous workflow designed specifically for rapid prototyping and academic benchmarking. It seamlessly chains the Distributed Training phase directly into the Bulk Inference phase. Users can submit a job and walk away; the system will build the distributed model, test it against a hold-out dataset, and immediately output comprehensive evaluation metrics (such as ROC-AUC, F1-Score, RMSE, and MAPE) in both CLI and persistent CSV/JSON logs.
-
-### 3. Bulk Inference (Massive Test Set Evaluation)
-Enables the evaluation of previously trained distributed models against massive, out-of-core test datasets. This mode is designed to bypass traditional memory constraints entirely. It allows users to point the system to a test file containing millions of rows and receive a highly accurate, globally aggregated evaluation without risking local or cluster-wide Out-Of-Memory crashes.
-
-### 4. Real-Time Inference (Single Prediction)
-Engineered for ad-hoc, on-the-fly predictions requiring ultra-low latency. Users can interactively input a single data point (tuple) directly through the CLI. The system safely guides the input using fetched dataset headers, broadcasts the query to the active compute cluster, and aggregates the consensus (Majority Vote or Mean) in less than a second. It is the perfect tool for instant model querying and interactive testing.
-
-### 5. Download & Merge Model (Local Export)
-Allows users to export a globally trained distributed model to their local machine for offline use or standalone deployment. The Client automatically fetches all the individual `.joblib` sub-forests from S3, intelligently aggregates their estimators into a single, unified Scikit-Learn Random Forest model, and saves it locally as a `.pkl` file. This effectively bridges the gap between cloud-scale distributed training and edge/local inference.
 
 ---
 
