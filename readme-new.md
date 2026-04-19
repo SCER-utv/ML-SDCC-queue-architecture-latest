@@ -13,12 +13,12 @@ The system is built on a highly decoupled architecture, based on master-worker p
 ![Training architecture Diagram](images/training_architecture.drawio.pdf) 
 ![Inference architecture Diagram](images/inference_architecture.drawio.pdf) 
 
-### 1. The Client (User Interface)
+### 1. Client
 The `client.py` file exposes an interactive CLI that guides the user through configuration of the cluster and the Machine Learning job. Its primary purpose is to abstract the underlying cloud infrastructure complexity from the end user.
 * **Job Contract:** Upon completing the configuration, the client builds a JSON dictionary containing the user's intentions. This job contract is dispatched to the Master node via SQS.
 * **Dynamic Inference Management:** During Real-Time inference requests, the Client fetches the dataset header "on-the-fly" from S3 to validate user input, ensuring the provided tuple perfectly matches the format expected by the distributed model.
 
-### 2. The Master Node (The Orchestrator)
+### 2. Master Node
 The `master.py` file acts as the orchestrator of the system. It is a persistent service constantly listening to the main Client queue. The architecture is logically divided into three main components: Core Orchestration, the Training Pipeline, and the Inference Pipeline.
 
 #### A. Core Orchestration Mechanisms
@@ -52,7 +52,7 @@ If the job entails testing a model, the `InferencePipeline` takes over. It handl
 
 ---
 
-### 3. The Worker Node (The Compute Engine)
+### 3. Worker Node
 The Worker Node represents the pure computational engine of the distributed system. It is designed to be completely **stateless**, meaning it holds no permanent data and can be spun up or terminated at any time by the AWS Auto Scaling Group without affecting the system's integrity. 
 
 The Worker code is logically divided into three main components: the Main Event Loop, the Training Handler, and the Inference Handler.
