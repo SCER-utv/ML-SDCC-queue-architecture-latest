@@ -1,6 +1,8 @@
-# Distributed Random Forest on AWS
+# Distributed Random Forest on AWS 
 
 This project implements a **Cloud-Native** architecture for the distributed training and inference of Machine Learning models (Random Forest). Based on the **Master-Worker** pattern, the system leverages AWS managed services (SQS, S3, EC2 Auto Scaling) to ensure horizontal scalability, fault tolerance, and optimized memory management (Zero-Waste RAM) on large-scale datasets.
+
+*Project developed for the Distributed Systems and Cloud Computing course.*
 
 ---
 
@@ -8,34 +10,67 @@ This project implements a **Cloud-Native** architecture for the distributed trai
 
 The system is built on a highly decoupled microservices architecture. Communication between components occurs exclusively via asynchronous message exchange over **Amazon SQS**, while heavy data (datasets and model weights) are stored in **Amazon S3**.
 
-![Architecture Diagram](link_to_your_architecture_image_here)
+![Architecture Diagram](docs/architecture_diagram.png) *(Note: Add your Draw.io diagram path here)*
 
 ### 1. The Client (User Interface)
 The `client.py` file exposes an interactive CLI that guides the user through configuring the cluster and the Machine Learning job. Its primary purpose is to abstract the underlying cloud infrastructure complexity from the end user.
-
 * **Thin Payload Contract:** Upon completing the configuration, the Client does not process any raw data. Instead, it builds a compact JSON dictionary (the *Thin Payload*) containing the user's intentions (number of trees, compute nodes, custom or gold standard hyperparameters, target column). This contract is dispatched to the Master node via SQS.
 * **Dynamic Inference Management:** During Real-Time inference requests, the Client fetches the dataset header "on-the-fly" from S3 to validate user input, ensuring the provided tuple perfectly matches the format expected by the distributed model.
 
 ### 2. The Master Node (The Orchestrator)
-The `master.py` file acts as the "brain" of the system. It is a persistent service constantly listening (via 20-second *Long Polling*) to the main Client queue. Upon receiving a *Thin Payload*, it triggers the following mechanisms:
-
-* **Security & Path Resolution:** Through the `resolve_paths` function, the Master translates the Client's intentions into concrete and secure S3 URLs. If the user selects a "Gold Standard" dataset, the Master automatically injects the official paths retrieved from `config.json`. If a "Custom" dataset is used, the Master isolates the data and evaluation metrics within a unique `experiments/` folder, preventing collisions or unauthorized data manipulation by the Workers.
-* **Master Heartbeat:** Since Machine Learning jobs can take tens of minutes, the Master spawns a dedicated background thread (`extend_client_sqs_visibility`) that cyclically renews the SQS message visibility for the Client's request (adding 60 seconds per tick). This prevents duplicate Master nodes from accidentally picking up the same job.
-* **Dynamic Routing:** Depending on the requested mode (`train`, `bulk_infer`, `infer`), the Master routes the job to the specific pipeline orchestrator (e.g., `TrainingPipeline` or `InferencePipeline`), which handles the *Fan-Out* of micro-tasks to the Worker queues.
+The `master.py` file acts as the "brain" of the system. It is a persistent service constantly listening (via 20-second *Long Polling*) to the main Client queue. Upon receiving a *Thin Payload*, it triggers:
+* **Security & Path Resolution:** Translates the Client's intentions into concrete and secure S3 URLs, isolating Custom data experiments to prevent data manipulation by Workers.
+* **Master Heartbeat:** Spawns a dedicated background thread that cyclically renews the SQS message visibility for the Client's request, preventing duplicate Master nodes from picking up the same long-running ML job.
+* **Dynamic Routing:** Depending on the requested mode, the Master routes the job to the specific pipeline orchestrator (`TrainingPipeline` or `InferencePipeline`) for the *Fan-Out* of micro-tasks to the Worker queues.
 
 ### 3. The Worker Node (The Compute Engine)
-The `worker.py` file represents the pure computational node. It is designed to be completely *stateless* and horizontally scalable via EC2 Auto Scaling Groups.
-
-* **Priority Polling:** The main event loop implements a strict priority queue system. The Worker always polls the Training queue (`q_train_in`) first. Only if no training tasks are available does it proceed to check the Inference queue (`q_infer_in`). This guarantees that bulk inference tasks never block the training pipeline of a new model.
-* **Resilience & Immediate NACK:** Every task processed by the Worker (both `TrainingHandler` and `InferenceHandler`) is wrapped in `try/except` blocks and monitored by an isolated Heartbeat thread. If a Worker runs out of memory (OOM) or encounters a logical exception, it catches the error and executes an `aws.release_message` (setting the *VisibilityTimeout* to 0). This causes the task to instantly reappear on the SQS queue, allowing a healthy node to pick it up without delay.
+The `worker.py` file represents the pure computational node, designed to be completely *stateless* and horizontally scalable via EC2 Auto Scaling Groups.
+* **Priority Polling:** The main event loop implements a strict priority queue system. The Worker always polls the Training queue first. Only if no training tasks are available does it proceed to check the Inference queue, guaranteeing that bulk inference tasks never block the training of a new model.
+* **Resilience & Immediate NACK:** Every task is wrapped in `try/except` blocks and monitored by an isolated Heartbeat thread. On an Out-of-Memory (OOM) error or logical exception, the worker catches it and executes an immediate release (`VisibilityTimeout=0`), allowing a healthy node to pick up the task instantly.
 
 ---
 
-## Data Management (Gold Standard vs. Custom)
+## System Capabilities & Operation Modes
 
-The system supports two distinct logical flows for dataset ingestion, handled seamlessly by the architecture:
+The system abstracts the complexity of distributed computing through a highly interactive CLI, allowing users to orchestrate the entire lifecycle of a Machine Learning model. It supports both **Classification** and **Regression** tasks through four distinct operation modes:
 
-* **Gold Standard (Benchmark):** Leveraging metadata in the configuration file, the system skips data-split phases by utilizing pre-partitioned files on S3. It allows the user to bypass manual tuning by injecting hyperparameter sets that have been thoroughly tested and optimized to maximize performance (Accuracy/RMSE) for specific forest sizes.
-* **Custom Datasets (User Upload):** By simply providing a raw `s3://` URL, the Master performs a Train/Test split in *Streaming Line-by-Line* mode. This prevents the entire dataset from being loaded into RAM, allowing the Master (often a lightweight T2 instance) to process multi-gigabyte datasets safely. Splits and metrics are grouped under the user-defined *Experiment Name* to ensure strict academic reproducibility.
+### 1. Distributed Training
+The system parallelizes the training of a Random Forest across multiple EC2 Worker nodes. 
+* **Mathematical Fan-Out:** The Master dynamically calculates the optimal distribution of trees (`n_estimators` / `num_workers`), assigning the remainder to the first available nodes. 
+* **Zero-Waste RAM:** Workers do not load the entire dataset. The Master instructs each worker on the exact row range (`skip_rows`, `num_rows`) to fetch from S3.
+* **Artifact Generation:** Each worker trains its assigned sub-forest and serializes it as an independent `.joblib` artifact securely stored on S3.
+
+### 2. End-to-End Pipeline (Train + Auto-Evaluate)
+A continuous, fully automated workflow ideal for rapid prototyping and academic benchmarking.
+* The system sequentially chains the Distributed Training phase and the Bulk Inference phase. 
+* Once training is complete, the Master immediately tasks the workers to evaluate the newly created distributed model against a hold-out Test Set.
+* The pipeline culminates with the Master calculating and persisting global evaluation metrics (e.g., ROC-AUC, F1-Score, RMSE, MAPE) in both CSV (for historical tracking) and JSON formats.
+
+### 3. Bulk Inference (Massive Test Set Evaluation)
+Designed to evaluate previously trained distributed models against massive datasets that exceed the memory capacity of a single machine.
+* **Memory-Safe Chunking:** Workers stream the test dataset from S3 in strictly defined block sizes (e.g., 500,000 rows at a time). After predicting a chunk, aggressive garbage collection (`gc.collect()`) is enforced to prevent Out-Of-Memory (OOM) crashes.
+* **Smart Aggregation:** Workers upload temporary `.npy` prediction arrays to S3. The Master downloads them and applies task-specific aggregation: **Majority Voting** for classification and **Weighted Averaging** (based on the exact number of trees each worker trained) for regression.
+
+### 4. Real-Time Inference (Single Tuple Prediction)
+Engineered for ultra-low latency scenarios where an immediate prediction is required for a single data point.
+* The Client automatically fetches the feature headers from the S3 dataset to guide the user's input safely.
+* The tuple is broadcasted to all Workers simultaneously. Workers keep their respective model chunks in fast RAM, predict the outcome, and instantly return their votes to the Master via SQS for sub-second aggregation.
+
+---
+
+## Dataset Management: Preconfigured vs. Custom Workflows
+
+A core architectural strength of this system is its completely *Data-Agnostic* design. It seamlessly handles two distinct ingestion logic flows without requiring manual code changes:
+
+### A. Preconfigured Datasets (Gold Standard Benchmarking)
+Built-in support for known academic datasets (e.g., *Airlines* for classification, *Taxi* for regression) defined directly within the `config.json`.
+* **Zero-Setup Routing:** S3 paths for Train and Test sets, task types, and target columns are automatically resolved by the Master. The data-split phase is entirely bypassed since the system relies on pre-partitioned, standardized files to guarantee exact benchmark reproducibility.
+* **Auto-Optimized Hyperparameters:** The user can opt to use "Golden Standard" parameters. The system automatically injects pre-calculated, grid-searched hyperparameter configurations (e.g., `max_depth`, `min_samples_split`) specifically tuned for the chosen dataset and the specified forest size.
+
+### B. Custom Datasets (Bring Your Own Data)
+Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into the CLI. The system dynamically adapts to the new schema.
+* **Streaming Auto-Split:** If the user provides a single monolithic file, the Master executes a Train/Test split. To prevent RAM saturation on the Master node, this split is performed in **Streaming Mode** (reading and writing line-by-line via `boto3`). 
+* **Target Masking:** The user specifies the exact target column name. Workers dynamically detect and drop this column during the training and inference phases, preventing data leakage.
+* **Experiment Isolation:** When working with Custom data, the user is prompted to assign an *Experiment Name*. The system creates a dedicated S3 directory (e.g., `experiments/my_custom_test/`). The auto-split datasets and the final metric logs are permanently saved here. This allows users to rerun different model configurations (e.g., changing the number of workers or trees) on the exact same data splits, ensuring scientifically valid comparisons.
 
 ---
