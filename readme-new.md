@@ -10,7 +10,8 @@ This project implements a **Cloud-Native** architecture for the distributed trai
 
 The system is built on a highly decoupled microservices architecture. Communication between components occurs exclusively via asynchronous message exchange over **Amazon SQS**, while heavy data (datasets and model weights) are stored in **Amazon S3**.
 
-![Architecture Diagram](images/training_architecture.drawio.pdf) 
+![Training architecture Diagram](images/training_architecture.drawio.pdf) 
+![Inference architecture Diagram](images/inference_architecture.drawio.pdf) 
 
 ### 1. The Client (User Interface)
 The `client.py` file exposes an interactive CLI that guides the user through configuring the cluster and the Machine Learning job. Its primary purpose is to abstract the underlying cloud infrastructure complexity from the end user.
