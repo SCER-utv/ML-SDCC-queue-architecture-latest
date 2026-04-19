@@ -22,7 +22,7 @@ The `client.py` file exposes an interactive CLI that guides the user through con
 The `master.py` file acts as the orchestrator of the system. It is a persistent service constantly listening to the main Client queue. Upon receiving a *Job*, it triggers:
 * **Security & Path Resolution:** Translates the Client's intentions into concrete and secure S3 URLs, isolating Custom data experiments from pre-configured data experiments.
 * **Master Heartbeat:** Spawns a background thread that renews the SQS message visibility for the Client's request, preventing duplicate Master nodes from picking up the same long-running ML job.
-* **Pipeline handlers:** Depending on the requested mode, the Master routes the job to the specific pipeline handler (`TrainingPipeline` or `InferencePipeline`).
+* **Pipeline handlers:** Depending on the requested mode, the Master routes the job to the specific pipeline handler (`TrainingPipeline` or `InferencePipeline`), also both to perform end to end pipeline.
   * **The Training Pipeline Workflow:** When a distributed training job is triggered, the Master executes a strict orchestration sequence:
     1. **Fault Tolerance & State Recovery:** Queries DynamoDB to check if the job is new or recovering from a previous Master crash, allowing the system to resume gracefully without restarting from scratch.
     2. **Infrastructure Provisioning:** Dynamically updates the AWS Auto Scaling Group (ASG) capacity to match the exact number of workers requested.
