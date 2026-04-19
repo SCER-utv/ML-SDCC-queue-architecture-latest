@@ -1,8 +1,8 @@
 # Distributed Random Forest on AWS 
 
-This project implements a **Cloud-Native** architecture for the distributed training and inference of Machine Learning models (Random Forest). Based on the **Master-Worker** pattern, the system leverages AWS managed services (SQS, S3, EC2 Auto Scaling) to ensure horizontal scalability, fault tolerance, and optimized memory management (Zero-Waste RAM) on large-scale datasets.
+This project implements a **Cloud-Native** architecture for the distributed training and inference of Random Forest machine learning models. It aims to get better performance in terms of execution time, compared to a system running on a single node, while keeping almost the same accuracy in terms of metrics evaluated.
 
-*Project developed for the Distributed Systems and Cloud Computing course.*
+*Project developed for ML+SDCC 2025/26*
 
 ---
 
