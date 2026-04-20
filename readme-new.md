@@ -216,7 +216,6 @@ You must upload your full, monolithic `.csv` dataset into the `data/interim/` S3
 The file name **must** follow the `<dataset_name>_<variant>.csv` convention. The system parses the string using the *last* underscore to separate the dataset's core name from its size/variant tag.
 
 * Example: `s3://<bucket>/data/interim/airlines_1M.csv`
-* Example: `s3://<bucket>/data/interim/my_new_dataset_optimized.csv`
 
 #### 2. S3 Select Header Validation
 During Auto-Discovery, the Master node does not download these massive CSV files to check if they are valid. Instead, it uses **AWS S3 Select** to execute an SQL query directly on the bucket (`SELECT * FROM S3Object LIMIT 1`). This efficiently extracts *only* the CSV header row to verify that the `target` column (declared in `config.json`) actually exists in the file. If the target column is missing, the variant is safely ignored.
