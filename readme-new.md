@@ -105,17 +105,25 @@ When an inference task is routed, this handler is responsible for utilizing a pr
 
 ## Dataset Management: Preconfigured vs. Custom Workflows
 
-A core architectural strength of this system is its completely *Data-Agnostic* design. It seamlessly handles two distinct ingestion logic flows without requiring manual code changes:
+A core architectural strength of this system is its completely *Data-Agnostic* design. To ensure data security, prevent collisions during concurrent job executions, and guarantee scientific reproducibility, the Master node's `resolve_paths` function handles S3 routing dynamically. 
+
+It seamlessly manages two distinct ingestion logic flows without requiring manual code changes:
 
 ### A. Preconfigured Datasets (Gold Standard Benchmarking)
 Built-in support for known academic datasets (e.g., *Airlines* for classification, *Taxi* for regression) defined directly within the `config.json`.
-* **Zero-Setup Routing:** S3 paths for Train and Test sets, task types, and target columns are automatically resolved by the Master. The data-split phase is entirely bypassed since the system relies on pre-partitioned, standardized files to guarantee exact benchmark reproducibility.
+
+* **Immutable S3 Routing:** The Master automatically resolves read-only S3 paths for Train and Test sets (e.g., `s3://<bucket>/datasets/airlines/1M/train.csv`). 
+* **Design Rationale (Strict Reproducibility):** The data-split phase is entirely bypassed. By forcing the system to read from pre-partitioned, standardized files, we guarantee that every benchmark run evaluates the exact same records. This eliminates variance caused by random splitting, ensuring that any difference in metrics or execution time is strictly due to the distributed architecture or hyperparameter tuning.
+* **Centralized Metrics:** Evaluation logs for these datasets are automatically routed to a dedicated, organized directory (`s3://<bucket>/metrics/gold_standard/<dataset_name>/<variant>/`), making it easy to aggregate historical benchmark data.
 * **Auto-Optimized Hyperparameters:** The user can opt to use "Golden Standard" parameters. The system automatically injects pre-calculated, grid-searched hyperparameter configurations (e.g., `max_depth`, `min_samples_split`) specifically tuned for the chosen dataset and the specified forest size.
 
 ### B. Custom Datasets (Bring Your Own Data)
-Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into the CLI. The system dynamically adapts to the new schema.
-* **Streaming Auto-Split:** If the user provides a single monolithic file, the Master executes a Train/Test split. To prevent RAM saturation on the Master node, this split is performed in **Streaming Mode** (reading and writing line-by-line via `boto3`). 
-* **Target Masking:** The user specifies the exact target column name. Workers dynamically detect and drop this column during the training and inference phases, preventing data leakage.
-* **Experiment Isolation:** When working with Custom data, the user is prompted to assign an *Experiment Name*. The system creates a dedicated S3 directory (e.g., `experiments/my_custom_test/`). The auto-split datasets and the final metric logs are permanently saved here. This allows users to rerun different model configurations (e.g., changing the number of workers or trees) on the exact same data splits, ensuring scientifically valid comparisons.
+Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into the CLI. The system dynamically adapts to the new schema while protecting the user's data integrity.
 
+* **Streaming Auto-Split:** If the user provides a single monolithic file, the Master executes a Train/Test split. To prevent RAM saturation on the Master node, this split is performed in **Streaming Mode** (reading and writing line-by-line via `boto3`). 
+* **Target Masking:** The user specifies the exact target column name in the CLI. Workers dynamically detect and drop this column during the training and inference phases, completely preventing data leakage.
+* **Dynamic Path Generation:** Custom workflows use dynamic S3 namespaces. Data is routed to `s3://<bucket>/experiments/<experiment_name>/` (if the user provides a name) or a temporary `s3://<bucket>/splits/<job_id>/` directory.
+* **Design Rationale (Experiment Isolation & A/B Testing):** This specific path structure was chosen to solve the "Data Leakage" and "Collision" problems in cloud environments. 
+  * *Collision Prevention:* Multiple users can run custom datasets simultaneously without their auto-split files overwriting each other.
+  * *A/B Testing:* By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid A/B comparisons.
 ---
