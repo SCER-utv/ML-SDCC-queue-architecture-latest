@@ -137,3 +137,105 @@ If manual configuration is triggered, the user inputs values for `max_depth`, `m
 
 **Step 7: The "Thin Payload" Dispatch**
 Once the flow is complete, the CLI packages all the gathered configurations into a compact JSON dictionary. It attaches a unique `job_id`, dispatches it to the SQS queue, and waits for the Master's orchestration response.
+
+---
+
+## 🛠️ Advanced: Extending the Gold Standard Benchmarks
+
+While the system supports completely custom datasets via the CLI, you may want to permanently integrate a new academic dataset into the "Preconfigured (Gold Standard)" list. This ensures that anyone using the system can run reproducible benchmarks with auto-optimized hyperparameters without manually configuring them each time.
+
+Adding a new dataset requires updating the configuration files and adhering to a strict S3 directory structure.
+
+### Step 1: Registering the Dataset Metadata
+First, you must declare the dataset's basic properties in the main `config.json` file under the `dataset_registry` object. The Master node uses this to determine how to evaluate the model and which column to drop during training.
+
+```json
+  "dataset_registry": {
+    "taxi": {
+      "target": "Label",
+      "type": "regression"
+    },
+    "airlines": {
+      "target": "Label",
+      "type": "classification"
+    },
+    "my_new_dataset": {
+      "target": "MyTargetColumn",
+      "type": "classification" 
+    }
+  }
+```
+
+### Step 2: Defining Homogeneous Hyperparameters
+If a user selects the **Homogeneous** strategy, all workers will use the exact same parameters. Because tree depth and splitting rules often depend on the *total size of the forest*, the homogeneous configuration maps **Total Trees** to a single Scikit-Learn parameter dictionary.
+
+Add your new dataset to the homogeneous JSON configuration file (e.g., `hyperparameters_homo.json`):
+
+```json
+{
+  "my_new_dataset": {
+    "50":  {"max_depth": 20, "min_samples_split": 50, "min_samples_leaf": 5, "max_features": "0.2", "criterion": "gini", "n_jobs": -1},
+    "100": {"max_depth": 27, "min_samples_split": 50, "min_samples_leaf": 6, "max_features": "0.2", "criterion": "gini", "n_jobs": -1}
+  }
+}
+```
+*If a user requests 50 trees, every worker in the cluster will receive the exact dictionary assigned to the `"50"` key.*
+
+### Step 3: Defining Heterogeneous Hyperparameters (Variance Boosting)
+If a user selects the **Heterogeneous** strategy, each worker must receive a *different* set of hyperparameters to force the sub-forests to learn different patterns (Variance Boosting). Therefore, this configuration maps the **Number of Workers** to an **Array of dictionaries**.
+
+Add your new dataset to the heterogeneous JSON configuration file (e.g., `hyperparameters_hetero.json`):
+
+```json
+{
+  "my_new_dataset": {
+    "1": [
+      {"max_depth": 27, "min_samples_split": 50, "max_features": "0.234", "criterion": "gini", "n_jobs": -1}
+    ],
+    "2": [
+      {"max_depth": 27, "min_samples_split": 50, "max_features": "0.234", "criterion": "gini", "n_jobs": -1},
+      {"max_depth": 19, "min_samples_split": 20, "max_features": "0.300", "criterion": "gini", "n_jobs": -1}
+    ],
+    "3": [
+      {"max_depth": 27, "min_samples_split": 50, "max_features": "0.234", "criterion": "gini", "n_jobs": -1},
+      {"max_depth": 19, "min_samples_split": 20, "max_features": "0.300", "criterion": "gini", "n_jobs": -1},
+      {"max_depth": 28, "min_samples_split": 60, "max_features": "0.200", "criterion": "entropy", "n_jobs": -1}
+    ]
+  }
+}
+```
+**Important Design Rule:** The length of the array must perfectly match the dictionary key. If the key is `"3"` (meaning a 3-worker cluster), the array must contain exactly 3 distinct configuration dictionaries. The Master node will iterate through this array and assign index 0 to Worker 1, index 1 to Worker 2, and so on.
+
+### Step 4: S3 Path Architecture & Auto-Discovery
+The system does not require you to manually hardcode S3 URLs for every dataset variant. Instead, it features an **Auto-Discovery engine** built into the configuration loader (`config.py`). On startup, the Master node scans the S3 bucket and automatically maps the datasets based on strict naming conventions.
+
+To successfully add your new dataset, adhere to the following S3 architecture:
+
+#### 1. The Interim Directory (Raw Upload)
+You must upload your full, monolithic `.csv` dataset into the `data/interim/` S3 prefix. 
+The file name **must** follow the `<dataset_name>_<variant>.csv` convention. The system parses the string using the *last* underscore to separate the dataset's core name from its size/variant tag.
+
+* Example: `s3://<bucket>/data/interim/airlines_1M.csv`
+* Example: `s3://<bucket>/data/interim/my_new_dataset_optimized.csv`
+
+#### 2. S3 Select Header Validation
+During Auto-Discovery, the Master node does not download these massive CSV files to check if they are valid. Instead, it uses **AWS S3 Select** to execute an SQL query directly on the bucket (`SELECT * FROM S3Object LIMIT 1`). This efficiently extracts *only* the CSV header row to verify that the `target` column (declared in `config.json`) actually exists in the file. If the target column is missing, the variant is safely ignored.
+
+#### 3. Automated Processed Path Generation
+If the dataset passes the header validation, the Auto-Discovery engine automatically computes and maps the future paths for the Train and Test splits. These processed files are strictly routed to the `data/processed/` prefix to prevent contamination of the raw data.
+
+If a user requests the End-to-End Pipeline with the "Auto-Split" option on your new `my_new_dataset_optimized.csv`, the Master will stream the split directly into these resolved S3 keys:
+
+```text
+s3://<bucket>/
+├── data/
+│   ├── interim/
+│   │   └── my_new_dataset_optimized.csv          <-- (You upload this)
+│   │
+│   └── processed/
+│       └── my_new_dataset/
+│           ├── my_new_dataset_optimized_train.csv <-- (Master generates this)
+│           └── my_new_dataset_optimized_test.csv  <-- (Master generates this)
+```
+
+Because of this automated mapping, the interactive CLI will immediately display `My_new_dataset` and the `optimized` variant as selectable options without any further code modifications.
