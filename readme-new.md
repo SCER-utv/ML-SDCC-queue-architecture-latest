@@ -154,7 +154,7 @@ Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into 
 
 ---
 
-### The Complete Configuration Flow (User Journey)
+## The Complete Configuration Flow (User Journey)
 The `client.py` orchestrates job configuration through a dynamic, context-aware prompt system. Depending on the chosen operation mode and data source, the CLI alters its questions to gather only the necessary paths and prevents logical conflicts. 
 
 Here is the step-by-step logical flow the user experiences:
