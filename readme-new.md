@@ -138,8 +138,8 @@ It seamlessly manages two distinct ingestion logic flows without requiring manua
 Built-in support for known academic datasets (e.g., *Airlines* for classification, *Taxi* for regression) defined directly within the system's `config.json`. The CLI allows the user to simply select the dataset name and its size variant (e.g., *1M rows* or *100k rows*).
 
 * **Immutable S3 Routing:** The Master automatically resolves read-only S3 paths for Train and Test sets (e.g., `s3://<bucket>/datasets/airlines/1M/train.csv`). 
-* **Design Rationale (Strict Reproducibility):** The data-split phase is entirely bypassed. By forcing the system to read from pre-partitioned, standardized files, we guarantee that every benchmark run evaluates the exact same records. This eliminates variance caused by random splitting, ensuring that any difference in metrics or execution time is strictly due to the distributed architecture or hyperparameter tuning.
-* **Auto-Optimized Hyperparameters:** The CLI offers the option to use "Golden Standard" parameters. The system automatically injects pre-calculated, grid-searched hyperparameter configurations (e.g., `max_depth`, `min_samples_split`, `max_features`) specifically tuned to maximize accuracy/RMSE for the chosen dataset and forest size.
+* **Design Rationale (Strict Reproducibility):** The data-split phase is entirely bypassed if train and test splits already exist. By forcing the system to read from pre-partitioned, standardized files, we guarantee that every benchmark run evaluates the exact same records. This eliminates variance caused by random splitting, ensuring that any difference in metrics or execution time is strictly due to the distributed architecture or hyperparameter tuning.
+* **Auto-Optimized Hyperparameters:** The CLI offers the option to use "Golden Standard" parameters. The system automatically injects hyperparameter configurations (e.g., `max_depth`, `min_samples_split`, `max_features`) specifically tuned to maximize accuracy/RMSE for the chosen dataset and forest size. The 
 * **Centralized Metrics:** Evaluation logs for these datasets are automatically routed to a dedicated, organized directory (`s3://<bucket>/metrics/gold_standard/<dataset_name>/<variant>/results_<job_id>.json`), making it easy to aggregate historical benchmark data.
 
 ### B. Custom Datasets (Bring Your Own Data)
@@ -150,3 +150,41 @@ Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into 
 * **Streaming Auto-Split:** If the user provides a single monolithic file, the CLI flags `needs_split=True`. To prevent RAM saturation on the Master node, the split is performed in **Streaming Mode** (reading and writing line-by-line via `boto3`). 
 * **Dynamic Path Generation & Experiment Isolation:** This is where the `resolve_paths` routing shines. Data is dynamically routed to `s3://<bucket>/experiments/<experiment_name>/` (if the user provides a name) or a temporary `s3://<bucket>/splits/<job_id>/` directory.
 * **Design Rationale (A/B Testing Consistency):** This specific path structure was chosen to maintain Train & Test consistency over multiple runs. By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid comparisons and preventing dataset collision in a multi-user cloud environment.
+
+
+---
+
+### The Complete Configuration Flow (User Journey)
+The `client.py` orchestrates job configuration through a dynamic, context-aware prompt system. Depending on the chosen operation mode and data source, the CLI alters its questions to gather only the necessary paths and prevents logical conflicts. 
+
+Here is the step-by-step logical flow the user experiences:
+
+**Step 1: The Primary Fork (Source Selection)**
+The user is asked to choose the data source type:
+* **Option 1 (Predefined):** The CLI dynamically lists available academic datasets (e.g., *Airlines*, *Taxi*) and their size variants from `config.json`. The system automatically infers the ML task and target column. If running an *End-to-End* pipeline, the user chooses whether to use pre-existing S3 splits or force a new Auto-Split.
+* **Option 2 (Custom S3 URL):** The user enters the "Bring Your Own Data" mode.
+
+**Step 2: Context-Aware Path Ingestion (Custom Data Only)**
+Depending on the operation mode, the CLI prompts only for the required paths: a single `train_url` for training, a `test_url` for bulk inference, or both for an End-to-End pipeline. For Real-Time inference, it requests a dataset URL purely to extract the CSV headers for input validation.
+
+**Step 3: Metadata & Isolation (Custom Data Only)**
+The user explicitly defines the **Target Column** and the **Machine Learning Task** (Classification/Regression). For training or bulk evaluation, the CLI prompts for an **Experiment Name**, which the Master uses to safely isolate the generated S3 artifacts (`experiments/<experiment_name>/`) for reproducible A/B testing.
+
+**Step 4: Cluster Sizing & Strategy (Training Only)**
+The user configures the distributed infrastructure by inputting the number of **Workers** and the total number of **Trees**. Then, they select the training strategy:
+* **Homogeneous:** Every worker trains its sub-forest using the exact same hyperparameters.
+* **Heterogeneous:** Workers use different hyperparameters to maximize forest variance and prevent overfitting.
+
+**Step 5: Smart Hyperparameter Routing**
+The CLI dynamically adapts the hyperparameter options based on the dataset type and the chosen strategy:
+* **Gold Standard Selected:** The CLI offers "Golden Standard (Auto-optimized)" parameters or Manual Configuration.
+* **Custom Dataset + Homogeneous:** The CLI offers standard Scikit-Learn defaults or Manual Configuration.
+* **Custom Dataset + Heterogeneous (Conflict Resolution):** The system detects a logical conflict (default parameters are identical, which defeats the purpose of a heterogeneous forest). It gracefully bypasses the menu and **forces the user into Manual Configuration**.
+
+**Step 6: The Manual Configuration Loop**
+If manual configuration is triggered, the user inputs values for `max_depth`, `min_samples_split`, `min_samples_leaf`, etc. 
+* If the strategy is *Homogeneous*, the CLI prompts for these values only once and applies them globally. 
+* If the strategy is *Heterogeneous*, the CLI loops through the prompts, asking for a unique hyperparameter configuration for *each* specific worker node.
+
+**Step 7: The "Thin Payload" Dispatch**
+Once the flow is complete, the CLI packages all the gathered configurations into a compact JSON dictionary. It attaches a unique `job_id`, dispatches it to the SQS queue, and waits for the Master's orchestration response.
