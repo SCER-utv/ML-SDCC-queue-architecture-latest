@@ -124,7 +124,7 @@ class CLI:
 
             elif mode == 'train_and_infer':
                 print("\n How are your datasets organized?")
-                print("  1) Single Full Dataset (Auto-Split will be executed)")
+                print("  1) Single Full Dataset (Auto-Split will be executed if Train and Test do not exist in the experiment folder)")
                 print("  2) Two Separate Datasets (Train file & Test file already existing)")
                 while True:
                     ans = input(" Enter 1 or 2: ").strip()
@@ -197,19 +197,25 @@ class CLI:
                 break
             print(" Invalid choice.")
 
-        print("\n Select Hyperparameter Source:")
-        if dataset_info['is_custom']:
-            print("  1) Default Generic Parameters (Standard Scikit-Learn)")
-            print("  2) Manual Configuration")
+        if dataset_info['is_custom'] and config_data['strategy'] == "heterogeneous":
+            print("\n [INFO] Heterogeneous strategy requires different parameters for each worker.")
+            print(" Forcing Manual Configuration...")
+            hyper_source = '2'
         else:
-            print("  1) Golden Standard (Auto-optimized per dataset)")
-            print("  2) Manual Configuration")
+            print("\n Select Hyperparameter Source:")
+            if dataset_info['is_custom']:
+                print("  1) Default Generic Parameters (Standard Scikit-Learn)")
+                print("  2) Manual Configuration")
+            else:
+                print("  1) Golden Standard (Auto-optimized per dataset)")
+                print("  2) Manual Configuration")
 
-        while True:
-            hyper_source = input(" Enter 1 or 2: ").strip()
-            if hyper_source in ['1', '2']:
-                break
-            print(" Invalid choice.")
+            while True:
+                hyper_source = input(" Enter 1 or 2: ").strip()
+                if hyper_source in ['1', '2']:
+                    break
+                print(" Invalid choice.")
+
 
         config_data['custom_hyperparams'] = None
 
