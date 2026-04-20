@@ -140,7 +140,7 @@ Once the flow is complete, the CLI packages all the gathered configurations into
 
 ---
 
-## 🛠️ Advanced: Extending the Gold Standard Benchmarks
+## Advanced: Extending the Gold Standard Benchmarks
 
 While the system supports completely custom datasets via the CLI, you may want to permanently integrate a new academic dataset into the "Preconfigured (Gold Standard)" list. This ensures that anyone using the system can run reproducible benchmarks with auto-optimized hyperparameters without manually configuring them each time.
 
