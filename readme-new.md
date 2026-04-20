@@ -126,3 +126,27 @@ Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into 
 * **Design Rationale (Experiment Isolation):** This specific path structure was chosen to mantain train & test consistency over multiple runs.
   * *A/B Testing:* By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid comparisons.
 ---
+
+
+## Dataset Management: Preconfigured vs. Custom Workflows
+
+A core architectural strength of this system is its completely *Data-Agnostic* design. To ensure data security, prevent collisions during concurrent job executions, and guarantee scientific reproducibility, the Master node's `resolve_paths` function handles S3 routing dynamically. 
+
+It seamlessly manages two distinct ingestion logic flows without requiring manual code changes:
+
+### A. Preconfigured Datasets (Gold Standard Benchmarking)
+Built-in support for known academic datasets (e.g., *Airlines* for classification, *Taxi* for regression) defined directly within the system's `config.json`. The CLI allows the user to simply select the dataset name and its size variant (e.g., *1M rows* or *100k rows*).
+
+* **Immutable S3 Routing:** The Master automatically resolves read-only S3 paths for Train and Test sets (e.g., `s3://<bucket>/datasets/airlines/1M/train.csv`). 
+* **Design Rationale (Strict Reproducibility):** The data-split phase is entirely bypassed. By forcing the system to read from pre-partitioned, standardized files, we guarantee that every benchmark run evaluates the exact same records. This eliminates variance caused by random splitting, ensuring that any difference in metrics or execution time is strictly due to the distributed architecture or hyperparameter tuning.
+* **Auto-Optimized Hyperparameters:** The CLI offers the option to use "Golden Standard" parameters. The system automatically injects pre-calculated, grid-searched hyperparameter configurations (e.g., `max_depth`, `min_samples_split`, `max_features`) specifically tuned to maximize accuracy/RMSE for the chosen dataset and forest size.
+* **Centralized Metrics:** Evaluation logs for these datasets are automatically routed to a dedicated, organized directory (`s3://<bucket>/metrics/gold_standard/<dataset_name>/<variant>/results_<job_id>.json`), making it easy to aggregate historical benchmark data.
+
+### B. Custom Datasets (Bring Your Own Data)
+Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into the interactive CLI. The system dynamically adapts to the new schema while protecting the user's data integrity.
+
+* **Target Feature Masking:** The user specifies the exact target column name (e.g., "Label" or "Price") in the CLI. Workers dynamically detect and drop this column during the training and inference phases, completely preventing data leakage.
+* **Flexible Hyperparameter Tuning:** Since "Golden Standard" parameters cannot exist for unseen data, the CLI adapts by offering two choices: use Scikit-Learn's default parameters or manually input a complete Grid Configuration (`max_depth`, `min_samples_leaf`, `criterion`, etc.) for each worker.
+* **Streaming Auto-Split:** If the user provides a single monolithic file, the CLI flags `needs_split=True`. To prevent RAM saturation on the Master node, the split is performed in **Streaming Mode** (reading and writing line-by-line via `boto3`). 
+* **Dynamic Path Generation & Experiment Isolation:** This is where the `resolve_paths` routing shines. Data is dynamically routed to `s3://<bucket>/experiments/<experiment_name>/` (if the user provides a name) or a temporary `s3://<bucket>/splits/<job_id>/` directory.
+* **Design Rationale (A/B Testing Consistency):** This specific path structure was chosen to maintain Train & Test consistency over multiple runs. By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid comparisons and preventing dataset collision in a multi-user cloud environment.
