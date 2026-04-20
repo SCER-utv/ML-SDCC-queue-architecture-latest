@@ -120,10 +120,9 @@ Built-in support for known academic datasets (e.g., *Airlines* for classificatio
 ### B. Custom Datasets (Bring Your Own Data)
 Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into the CLI. The system dynamically adapts to the new schema while protecting the user's data integrity.
 
-* **Streaming Auto-Split:** If the user provides a single monolithic file, the Master executes a Train/Test split. To prevent RAM saturation on the Master node, this split is performed in **Streaming Mode** (reading and writing line-by-line via `boto3`). 
-* **Target Masking:** The user specifies the exact target column name in the CLI. Workers dynamically detect and drop this column during the training and inference phases, completely preventing data leakage.
-* **Dynamic Path Generation:** Custom workflows use dynamic S3 namespaces. Data is routed to `s3://<bucket>/experiments/<experiment_name>/` (if the user provides a name) or a temporary `s3://<bucket>/splits/<job_id>/` directory.
-* **Design Rationale (Experiment Isolation & A/B Testing):** This specific path structure was chosen to solve the "Data Leakage" and "Collision" problems in cloud environments. 
-  * *Collision Prevention:* Multiple users can run custom datasets simultaneously without their auto-split files overwriting each other.
-  * *A/B Testing:* By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid A/B comparisons.
+* **Auto-Split:** If the user provides a single monolithic file, the Master executes a Train/Test split. 
+* **Target feature:** The user specifies the exact target column name in the CLI. Workers dynamically detect and drop this column during the training and inference phases, completely preventing data leakage.
+* **Dynamic Path Generation:** Data is routed to `s3://<bucket>/experiments/<experiment_name>/` (if the user provides a name) or a temporary `s3://<bucket>/splits/<job_id>/` directory.
+* **Design Rationale (Experiment Isolation):** This specific path structure was chosen to mantain train & test consistency over multiple runs.
+  * *A/B Testing:* By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid comparisons.
 ---
