@@ -103,50 +103,138 @@ When an inference task is routed, this handler is responsible for utilizing a pr
 
 ---
 
-## Dataset Management: Preconfigured vs. Custom Workflows
+## The Complete Configuration Flow (User Journey)
+The `client.py` orchestrates job configuration through a dynamic, context-aware prompt system. Depending on the chosen operation mode and data source, the CLI alters its questions to gather only the necessary paths and prevents logical conflicts. 
 
-A core architectural strength of this system is its completely *Data-Agnostic* design. To ensure data security, prevent collisions during concurrent job executions, and guarantee scientific reproducibility, the Master node's `resolve_paths` function handles S3 routing dynamically. 
+Here is the step-by-step logical flow the user experiences:
 
-It seamlessly manages two distinct ingestion logic flows without requiring manual code changes:
+**Step 1: The Primary Fork (Source Selection)**
+The user is asked to choose the data source type:
+* **Option 1 (Predefined):** The CLI dynamically lists available academic datasets (e.g., *Airlines*, *Taxi*) and their size variants from `config.json`. The system automatically infers the ML task and target column. If running an *End-to-End* pipeline, the user chooses whether to use pre-existing S3 splits or force a new Auto-Split.
+* **Option 2 (Custom S3 URL):** The user enters the "Bring Your Own Data" mode.
 
-### A. Preconfigured Datasets (Gold Standard Benchmarking)
-Built-in support for known academic datasets (e.g., *Airlines* for classification, *Taxi* for regression) defined directly within the `config.json`.
+**Step 2: Context-Aware Path Ingestion (Custom Data Only)**
+Depending on the operation mode, the CLI prompts only for the required paths: a single `train_url` for training, a `test_url` for bulk inference, or both for an End-to-End pipeline. For Real-Time inference, it requests a dataset URL purely to extract the CSV headers for input validation.
 
-* **Immutable S3 Routing:** The Master automatically resolves read-only S3 paths for Train and Test sets (e.g., `s3://<bucket>/datasets/airlines/1M/train.csv`). 
-* **Design Rationale (Strict Reproducibility):** The data-split phase is entirely bypassed. By forcing the system to read from pre-partitioned, standardized files, we guarantee that every benchmark run evaluates the exact same records. This eliminates variance caused by random splitting, ensuring that any difference in metrics or execution time is strictly due to the distributed architecture or hyperparameter tuning.
-* **Centralized Metrics:** Evaluation logs for these datasets are automatically routed to a dedicated, organized directory (`s3://<bucket>/metrics/gold_standard/<dataset_name>/<variant>/`), making it easy to aggregate historical benchmark data.
-* **Auto-Optimized Hyperparameters:** The user can opt to use "Golden Standard" parameters. The system automatically injects pre-calculated, grid-searched hyperparameter configurations (e.g., `max_depth`, `min_samples_split`) specifically tuned for the chosen dataset and the specified forest size.
+**Step 3: Metadata & Isolation (Custom Data Only)**
+The user explicitly defines the **Target Column** and the **Machine Learning Task** (Classification/Regression). For training or bulk evaluation, the CLI prompts for an **Experiment Name**, which the Master uses to safely isolate the generated S3 artifacts (`experiments/<experiment_name>/`) for reproducible A/B testing.
 
-### B. Custom Datasets (Bring Your Own Data)
-Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into the CLI. The system dynamically adapts to the new schema while protecting the user's data integrity.
+**Step 4: Cluster Sizing & Strategy (Training Only)**
+The user configures the distributed infrastructure by inputting the number of **Workers** and the total number of **Trees**. Then, they select the training strategy:
+* **Homogeneous:** Every worker trains its sub-forest using the exact same hyperparameters.
+* **Heterogeneous:** Workers use different hyperparameters to maximize forest variance and prevent overfitting.
 
-* **Auto-Split:** If the user provides a single monolithic file, the Master executes a Train/Test split. 
-* **Target feature:** The user specifies the exact target column name in the CLI. Workers dynamically detect and drop this column during the training and inference phases, completely preventing data leakage.
-* **Dynamic Path Generation:** Data is routed to `s3://<bucket>/experiments/<experiment_name>/` (if the user provides a name) or a temporary `s3://<bucket>/splits/<job_id>/` directory.
-* **Design Rationale (Experiment Isolation):** This specific path structure was chosen to mantain train & test consistency over multiple runs.
-  * *A/B Testing:* By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid comparisons.
+**Step 5: Smart Hyperparameter Routing**
+The CLI dynamically adapts the hyperparameter options based on the dataset type and the chosen strategy:
+* **Gold Standard Selected:** The CLI offers "Golden Standard (Auto-optimized)" parameters or Manual Configuration.
+* **Custom Dataset + Homogeneous:** The CLI offers standard Scikit-Learn defaults or Manual Configuration.
+* **Custom Dataset + Heterogeneous (Conflict Resolution):** The system detects a logical conflict (default parameters are identical, which defeats the purpose of a heterogeneous forest). It gracefully bypasses the menu and **forces the user into Manual Configuration**.
+
+**Step 6: The Manual Configuration Loop**
+If manual configuration is triggered, the user inputs values for `max_depth`, `min_samples_split`, `min_samples_leaf`, etc. 
+* If the strategy is *Homogeneous*, the CLI prompts for these values only once and applies them globally. 
+* If the strategy is *Heterogeneous*, the CLI loops through the prompts, asking for a unique hyperparameter configuration for *each* specific worker node.
+
+**Step 7: The "Thin Payload" Dispatch**
+Once the flow is complete, the CLI packages all the gathered configurations into a compact JSON dictionary. It attaches a unique `job_id`, dispatches it to the SQS queue, and waits for the Master's orchestration response.
+
 ---
 
+## Advanced: Extending the Gold Standard Benchmarks
 
-## Dataset Management: Preconfigured vs. Custom Workflows
+While the system supports completely custom datasets via the CLI, you may want to permanently integrate a new academic dataset into the "Preconfigured (Gold Standard)" list. This ensures that anyone using the system can run reproducible benchmarks with auto-optimized hyperparameters without manually configuring them each time.
 
-A core architectural strength of this system is its completely *Data-Agnostic* design. To ensure data security, prevent collisions during concurrent job executions, and guarantee scientific reproducibility, the Master node's `resolve_paths` function handles S3 routing dynamically. 
+Adding a new dataset requires updating the configuration files and adhering to a strict S3 directory structure.
 
-It seamlessly manages two distinct ingestion logic flows without requiring manual code changes:
+### Step 1: Registering the Dataset Metadata
+First, you must declare the dataset's basic properties in the main `config.json` file under the `dataset_registry` object. The Master node uses this to determine how to evaluate the model and which column to drop during training.
 
-### A. Preconfigured Datasets (Gold Standard Benchmarking)
-Built-in support for known academic datasets (e.g., *Airlines* for classification, *Taxi* for regression) defined directly within the system's `config.json`. The CLI allows the user to simply select the dataset name and its size variant (e.g., *1M rows* or *100k rows*).
+```json
+  "dataset_registry": {
+    "taxi": {
+      "target": "Label",
+      "type": "regression"
+    },
+    "airlines": {
+      "target": "Label",
+      "type": "classification"
+    },
+    "my_new_dataset": {
+      "target": "MyTargetColumn",
+      "type": "classification" 
+    }
+  }
+```
 
-* **Immutable S3 Routing:** The Master automatically resolves read-only S3 paths for Train and Test sets (e.g., `s3://<bucket>/datasets/airlines/1M/train.csv`). 
-* **Design Rationale (Strict Reproducibility):** The data-split phase is entirely bypassed. By forcing the system to read from pre-partitioned, standardized files, we guarantee that every benchmark run evaluates the exact same records. This eliminates variance caused by random splitting, ensuring that any difference in metrics or execution time is strictly due to the distributed architecture or hyperparameter tuning.
-* **Auto-Optimized Hyperparameters:** The CLI offers the option to use "Golden Standard" parameters. The system automatically injects pre-calculated, grid-searched hyperparameter configurations (e.g., `max_depth`, `min_samples_split`, `max_features`) specifically tuned to maximize accuracy/RMSE for the chosen dataset and forest size.
-* **Centralized Metrics:** Evaluation logs for these datasets are automatically routed to a dedicated, organized directory (`s3://<bucket>/metrics/gold_standard/<dataset_name>/<variant>/results_<job_id>.json`), making it easy to aggregate historical benchmark data.
+### Step 2: Defining Homogeneous Hyperparameters
+If a user selects the **Homogeneous** strategy, all workers will use the exact same parameters. Because tree depth and splitting rules often depend on the *total size of the forest*, the homogeneous configuration maps **Total Trees** to a single Scikit-Learn parameter dictionary.
 
-### B. Custom Datasets (Bring Your Own Data)
-Users can provide any raw `.csv` dataset by simply pasting its `s3://` URL into the interactive CLI. The system dynamically adapts to the new schema while protecting the user's data integrity.
+Add your new dataset to the homogeneous JSON configuration file (e.g., `hyperparameters_homo.json`):
 
-* **Target Feature Masking:** The user specifies the exact target column name (e.g., "Label" or "Price") in the CLI. Workers dynamically detect and drop this column during the training and inference phases, completely preventing data leakage.
-* **Flexible Hyperparameter Tuning:** Since "Golden Standard" parameters cannot exist for unseen data, the CLI adapts by offering two choices: use Scikit-Learn's default parameters or manually input a complete Grid Configuration (`max_depth`, `min_samples_leaf`, `criterion`, etc.) for each worker.
-* **Streaming Auto-Split:** If the user provides a single monolithic file, the CLI flags `needs_split=True`. To prevent RAM saturation on the Master node, the split is performed in **Streaming Mode** (reading and writing line-by-line via `boto3`). 
-* **Dynamic Path Generation & Experiment Isolation:** This is where the `resolve_paths` routing shines. Data is dynamically routed to `s3://<bucket>/experiments/<experiment_name>/` (if the user provides a name) or a temporary `s3://<bucket>/splits/<job_id>/` directory.
-* **Design Rationale (A/B Testing Consistency):** This specific path structure was chosen to maintain Train & Test consistency over multiple runs. By saving the auto-split `train.csv`, `test.csv`, and the final `results.json` inside a permanent `experiments/my_custom_test/` folder, the user can run multiple subsequent jobs pointing to the exact same experiment name. This allows them to test different cluster sizes (e.g., 5 workers vs 10 workers) or different hyperparameters on the *exact same random split*, guaranteeing scientifically valid comparisons and preventing dataset collision in a multi-user cloud environment.
+```json
+{
+  "my_new_dataset": {
+    "50":  {"max_depth": 20, "min_samples_split": 50, "min_samples_leaf": 5, "max_features": "0.2", "criterion": "gini", "n_jobs": -1},
+    "100": {"max_depth": 27, "min_samples_split": 50, "min_samples_leaf": 6, "max_features": "0.2", "criterion": "gini", "n_jobs": -1}
+  }
+}
+```
+*If a user requests 50 trees, every worker in the cluster will receive the exact dictionary assigned to the `"50"` key.*
+
+### Step 3: Defining Heterogeneous Hyperparameters (Variance Boosting)
+If a user selects the **Heterogeneous** strategy, each worker must receive a *different* set of hyperparameters to force the sub-forests to learn different patterns (Variance Boosting). Therefore, this configuration maps the **Number of Workers** to an **Array of dictionaries**.
+
+Add your new dataset to the heterogeneous JSON configuration file (e.g., `hyperparameters_hetero.json`):
+
+```json
+{
+  "my_new_dataset": {
+    "1": [
+      {"max_depth": 27, "min_samples_split": 50, "max_features": "0.234", "criterion": "gini", "n_jobs": -1}
+    ],
+    "2": [
+      {"max_depth": 27, "min_samples_split": 50, "max_features": "0.234", "criterion": "gini", "n_jobs": -1},
+      {"max_depth": 19, "min_samples_split": 20, "max_features": "0.300", "criterion": "gini", "n_jobs": -1}
+    ],
+    "3": [
+      {"max_depth": 27, "min_samples_split": 50, "max_features": "0.234", "criterion": "gini", "n_jobs": -1},
+      {"max_depth": 19, "min_samples_split": 20, "max_features": "0.300", "criterion": "gini", "n_jobs": -1},
+      {"max_depth": 28, "min_samples_split": 60, "max_features": "0.200", "criterion": "entropy", "n_jobs": -1}
+    ]
+  }
+}
+```
+**Important Design Rule:** The length of the array must perfectly match the dictionary key. If the key is `"3"` (meaning a 3-worker cluster), the array must contain exactly 3 distinct configuration dictionaries. The Master node will iterate through this array and assign index 0 to Worker 1, index 1 to Worker 2, and so on.
+
+### Step 4: S3 Path Architecture & Auto-Discovery
+The system does not require you to manually hardcode S3 URLs for every dataset variant. Instead, it features an **Auto-Discovery engine** built into the configuration loader (`config.py`). On startup, the Master node scans the S3 bucket and automatically maps the datasets based on strict naming conventions.
+
+To successfully add your new dataset, adhere to the following S3 architecture:
+
+#### 1. The Interim Directory (Raw Upload)
+You must upload your full, monolithic `.csv` dataset into the `data/interim/` S3 prefix. 
+The file name **must** follow the `<dataset_name>_<variant>.csv` convention. The system parses the string using the *last* underscore to separate the dataset's core name from its size/variant tag.
+
+* Example: `s3://<bucket>/data/interim/airlines_1M.csv`
+
+#### 2. S3 Select Header Validation
+During Auto-Discovery, the Master node does not download these massive CSV files to check if they are valid. Instead, it uses **AWS S3 Select** to execute an SQL query directly on the bucket (`SELECT * FROM S3Object LIMIT 1`). This efficiently extracts *only* the CSV header row to verify that the `target` column (declared in `config.json`) actually exists in the file. If the target column is missing, the variant is safely ignored.
+
+#### 3. Automated Processed Path Generation
+If the dataset passes the header validation, the Auto-Discovery engine automatically computes and maps the future paths for the Train and Test splits. These processed files are strictly routed to the `data/processed/` prefix to prevent contamination of the raw data.
+
+If a user requests the End-to-End Pipeline with the "Auto-Split" option on your new `my_new_dataset_optimized.csv`, the Master will stream the split directly into these resolved S3 keys:
+
+```text
+s3://<bucket>/
+├── data/
+│   ├── interim/
+│   │   └── my_new_dataset_optimized.csv          <-- (You upload this)
+│   │
+│   └── processed/
+│       └── my_new_dataset/
+│           ├── my_new_dataset_optimized_train.csv <-- (Master generates this)
+│           └── my_new_dataset_optimized_test.csv  <-- (Master generates this)
+```
+
+Because of this automated mapping, the interactive CLI will immediately display `My_new_dataset` and the `optimized` variant as selectable options without any further code modifications.
