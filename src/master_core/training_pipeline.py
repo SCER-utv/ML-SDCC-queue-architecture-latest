@@ -100,6 +100,48 @@ class TrainingPipeline:
             print(" [PIPELINE] No split required. Using source dataset directly.")
             return self.aws.get_total_rows_s3_select(bucket, source_key)
 
+
+
+    def _fetch_target_strategies(self, strategy, dataset, num_trees_total, num_workers):
+        strategies_s3_key = f"config/{strategy}_tasks.json"
+        target_strategies = []
+
+        try:
+            print(f" [PIPELINE] Downloading strategies from s3://{self.aws.bucket}/{strategies_s3_key}...")
+            response = self.aws.s3_client.get_object(Bucket=self.aws.bucket, Key=strategies_s3_key)
+            all_strategies = json.loads(response['Body'].read().decode('utf-8'))
+
+            if strategy == "homogeneous":
+                dataset_conf = all_strategies.get(dataset, {})
+                conf = dataset_conf.get(str(num_trees_total))
+
+                #this section finds the closest configuration to the input num_trees and uses it
+                if not conf and dataset_conf:
+                    try:
+                        available_trees = [int(k) for k in dataset_conf.keys() if k.isdigit()]
+                        if available_trees:
+                            closest_trees = min(available_trees, key=lambda x: abs(x - num_trees_total))
+                            conf = dataset_conf[str(closest_trees)]
+                            print(
+                                f" [INFO] Exact configuration for {num_trees_total} trees not found. Using closest available, configuration for: {closest_trees} trees.")
+                    except Exception as e:
+                        print(f" [WARNING] Error calculating closest tree configuration: {e}")
+
+                if conf:
+                    target_strategies = [conf] * num_workers
+            else:
+                # heterogeneous configuration
+                target_strategies = all_strategies.get(dataset, {}).get(str(num_workers), [])
+
+        except self.aws.s3_client.exceptions.NoSuchKey:
+            print(f" [WARNING] File {strategies_s3_key} not found on S3. Using fallback parameters.")
+        except Exception as e:
+            print(f" [WARNING] Error while downloading strategies from S3: {e}. Using fallback parameters.")
+
+        return target_strategies
+
+
+
     # generates and queues individual training tasks for each worker
     def _generate_tasks(self, job_data, job_id, total_rows):
         num_workers = job_data['num_workers']
@@ -113,21 +155,7 @@ class TrainingPipeline:
         target_strategies = job_data.get('custom_hyperparams')
 
         if not target_strategies:
-            strategies_s3_key = f"config/{strategy}_tasks.json"
-            all_strategies = {}
-            try:
-                print(f" [PIPELINE] Downloading strategies from s3://{self.aws.bucket}/{strategies_s3_key}...")
-                response = self.aws.s3_client.get_object(Bucket=self.aws.bucket, Key=strategies_s3_key)
-                all_strategies = json.loads(response['Body'].read().decode('utf-8'))
-                if strategy == "homogeneous":
-                    conf = all_strategies.get(dataset, {}).get(str(num_trees_total))
-                    target_strategies = [conf] * num_workers if conf else []
-                else:
-                    target_strategies = all_strategies.get(dataset, {}).get(str(num_workers), [])
-            except self.aws.s3_client.exceptions.NoSuchKey:
-                    print(f" [WARNING] File {strategies_s3_key} not found on S3. Using fallback parameters.")
-            except Exception as e:
-                print(f" [WARNING] Error while downloading strategies from S3: {e}. Using fallback parameters.")
+            target_strategies = self._fetch_target_strategies(strategy, dataset, num_trees_total, num_workers)
 
         # fallback configuration
         if not target_strategies:

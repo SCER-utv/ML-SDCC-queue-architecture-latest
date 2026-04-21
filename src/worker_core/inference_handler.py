@@ -39,7 +39,7 @@ class InferenceHandler:
 
         # download the assigned partial model from s3 into temporary storage
         local_model_path = f"/tmp/model_{job_id}_{task_id}.joblib"
-        self.aws.s3.download_file(bucket, model_key, local_model_path)
+        self.aws.s3_client.download_file(bucket, model_key, local_model_path)
         rf = joblib.load(local_model_path)
         os.remove(local_model_path)
 
@@ -106,7 +106,7 @@ class InferenceHandler:
         local_npy_path = f"/tmp/results_{job_id}_{task_id}.npy"
         np.save(local_npy_path, numpy_results)
         s3_key = f"results/{task_data['dataset']}/{task_data.get('dataset_variant', '1M')}/{job_id}/task_{task_id}.npy"
-        self.aws.s3.upload_file(local_npy_path, bucket, s3_key)
+        self.aws.s3_client.upload_file(local_npy_path, bucket, s3_key)
         os.remove(local_npy_path)
 
         return {"tipo": "bulk", "valore": f"s3://{bucket}/{s3_key}"}
