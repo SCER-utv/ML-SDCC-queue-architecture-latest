@@ -113,18 +113,21 @@ class TrainingPipeline:
         target_strategies = job_data.get('custom_hyperparams')
 
         if not target_strategies:
-            root_dir = self.config.get('_root_dir', '.')
-            strategies_path = os.path.join(root_dir, 'config', f'{strategy}_tasks.json')
+            strategies_s3_key = f"config/{strategy}_tasks.json"
+            all_strategies = {}
             try:
-                with open(strategies_path, 'r') as f:
-                    all_strategies = json.load(f)
+                print(f" [PIPELINE] Downloading strategies from s3://{self.aws.bucket}/{strategies_s3_key}...")
+                response = self.aws.s3_client.get_object(Bucket=self.aws.bucket, Key=strategies_s3_key)
+                all_strategies = json.loads(response['Body'].read().decode('utf-8'))
                 if strategy == "homogeneous":
                     conf = all_strategies.get(dataset, {}).get(str(num_trees_total))
                     target_strategies = [conf] * num_workers if conf else []
                 else:
                     target_strategies = all_strategies.get(dataset, {}).get(str(num_workers), [])
-            except FileNotFoundError:
-                pass
+            except self.aws.s3_client.exceptions.NoSuchKey:
+                    print(f" [WARNING] File {strategies_s3_key} not found on S3. Using fallback parameters.")
+            except Exception as e:
+                print(f" [WARNING] Error while downloading strategies from S3: {e}. Using fallback parameters.")
 
         # fallback configuration
         if not target_strategies:
@@ -193,7 +196,7 @@ class TrainingPipeline:
             }
 
             current_skip += n_rows
-            self.aws.sqs_client.send_message(QueueUrl=self.config["sqs_queues"]["train_task"], MessageBody=json.dumps(task_payload))
+            self.aws.sqs_client.send_message(QueueUrl=self.aws.sqs_queues["train_task"], MessageBody=json.dumps(task_payload))
             print(f" Enqueued {task_payload['task_id']} ({trees} trees).")
 
             """
@@ -212,7 +215,7 @@ class TrainingPipeline:
     # polls the sqs response queue until all workers complete their training tasks
     def _wait_for_workers(self, job_id, num_workers, completed_train_tasks, start_train, tasks_dispatched):
         print("\n [EVENT LOOP] Master listening actively for Worker responses...\n")
-        train_resp_queue = self.config["sqs_queues"]["train_response"]
+        train_resp_queue = self.aws.sqs_queues["train_response"]
 
         while len(completed_train_tasks) < num_workers:
             res_train = self.aws.sqs_client.receive_message(QueueUrl=train_resp_queue, MaxNumberOfMessages=10, WaitTimeSeconds=2)
@@ -234,7 +237,7 @@ class TrainingPipeline:
 
     # notifies the client that the training pipeline has finished
     def _send_client_response(self, job_id, mode, total_time):
-        client_response_queue = self.config.get("sqs_queues", {}).get("client_response")
+        client_response_queue = self.aws.sqs_queues["client_response"]
         if client_response_queue:
             self.aws.sqs_client.send_message(QueueUrl=client_response_queue, MessageBody=json.dumps(
                 {"job_id": job_id, "target_model": job_id, "mode": mode, "total_time_sec": round(total_time, 2)}))

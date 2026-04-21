@@ -22,10 +22,10 @@ def extend_client_sqs_visibility(aws, queue_url, receipt_handle, stop_event):
 
 
 # translates the client's thin payload into concrete and secure s3 paths for the master
-def resolve_paths(job_data, config):
+def resolve_paths(job_data, config, aws):
     is_custom = job_data.get('is_custom', False)
     mode = job_data.get('mode')
-    bucket = config.get("s3_bucket")
+    bucket = aws.bucket
     job_id = job_data.get('job_id')
     needs_split = job_data.get('needs_split', False)
 
@@ -82,7 +82,7 @@ def main():
     trainer = TrainingPipeline(aws)
     inferencer = InferencePipeline(aws, evaluator)
 
-    CLIENT_QUEUE_URL = config["sqs_queues"]["client"]
+    CLIENT_QUEUE_URL = aws.sqs_queues["client"]
     print(" [MASTER] System ready. Listening for new Jobs from client...")
 
     while True:
@@ -100,7 +100,7 @@ def main():
             print(f"\n{'=' * 50}\n STARTING PIPELINE: {job_id} (Mode: {mode})\n{'=' * 50}")
 
             # securely resolve and assign authoritative s3 paths
-            job_data = resolve_paths(raw_job_data, config)
+            job_data = resolve_paths(raw_job_data, config, aws)
 
             stop_event = threading.Event()
             heartbeat_thread = threading.Thread(target=extend_client_sqs_visibility,

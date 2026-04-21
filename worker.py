@@ -24,7 +24,7 @@ def handle_task(aws, msg, in_queue, out_queue, handler_process_func, task_type):
             "task_id": body['task_id'],
             **({"s3_model_uri": result} if task_type == 'train' else {"s3_voti_uri": result})
         }
-        aws.sqs.send_message(QueueUrl=out_queue, MessageBody=json.dumps(response))
+        aws.sqs_client.send_message(QueueUrl=out_queue, MessageBody=json.dumps(response))
         aws.delete_message(in_queue, receipt)
         print(f" [{task_type.upper()}] {body['task_id']} completed successfully!\n")
 
@@ -45,10 +45,10 @@ def main():
     trainer = TrainingHandler(aws, config)
     inferencer = InferenceHandler(aws, config)
 
-    q_train_in = config["sqs_queues"]["train_task"]
-    q_train_out = config["sqs_queues"]["train_response"]
-    q_infer_in = config["sqs_queues"]["infer_task"]
-    q_infer_out = config["sqs_queues"]["infer_response"]
+    q_train_in = aws.sqs_queues["train_task"]
+    q_train_out = aws.sqs_queues["train_response"]
+    q_infer_in = aws.sqs_queues["infer_task"]
+    q_infer_out = aws.sqs_queues["infer_response"]
 
     while True:
         try:

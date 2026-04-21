@@ -105,11 +105,17 @@ def load_config():
     with open(config_path, 'r') as f:
         config = json.load(f)
 
+    bucket = os.getenv("S3_BUCKET_NAME")
+    region = os.getenv("AWS_REGION", "us-east-1")
+
+    if not bucket:
+        raise ValueError(" [CRITICAL] ENV variable not found for datasets discovery!")
+
     dataset_registry = config.get("dataset_registry", {})
     print("\n [AUTO-DISCOVERY] Scanning S3 'data/interim/' prefix for valid datasets and variants...")
 
     # Inject dynamically discovered nested dictionary
-    config['datasets_metadata'] = discover_all_datasets(config['s3_bucket'], config['aws_region'], dataset_registry)
+    config['datasets_metadata'] = discover_all_datasets(bucket, region, dataset_registry)
 
     config['_root_dir'] = root_dir
     _cached_config = config

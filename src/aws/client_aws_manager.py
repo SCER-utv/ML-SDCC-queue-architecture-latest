@@ -8,14 +8,53 @@ import boto3
 class ClientAWSManager:
 
     def __init__(self, config):
-        self.region = config.get("aws_region")
-        self.bucket = config.get("s3_bucket")
-        self.client_queue_url = config["sqs_queues"]["client"]
-        self.client_resp_queue = config["sqs_queues"].get("client_response")
+        # 1. Retrieving base params from environment variables
+        self.region = os.getenv("AWS_REGION", "us-east-1")
+        self.bucket = os.getenv("S3_BUCKET_NAME")
 
-        # aws clients initialization
+        if not self.bucket:
+            raise ValueError(" [CRITICAL] S3_BUCKET_NAME environment variable is not set!")
+
+        #2. initializing aws clients
         self.s3_client = boto3.client('s3', region_name=self.region)
         self.sqs_client = boto3.client('sqs', region_name=self.region)
+        self.ssm_client = boto3.client('ssm', region_name=self.region)
+
+        config_key = os.getenv("S3_CONFIG_KEY", "config/ssm_paths.json")
+        ssm_paths = self._load_remote_config(config_key)
+
+        # 3. initializing queues by retrieving name from ssm and url
+        print(" [INIT] SQS URL dynamic runtime resolution ......")
+        self.client_queue_url = self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_client")))
+        self.client_resp_queue = self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_client_resp")))
+
+    # used to load ssm path file from s3
+    def _load_remote_config(self, key):
+        try:
+            print(f" [INIT] Download infrastructural configuration from s3://{self.bucket}/{key}...")
+            response = self.s3_client.get_object(Bucket=self.bucket, Key=key)
+            config_data = json.loads(response['Body'].read().decode('utf-8'))
+            return config_data
+        except Exception as e:
+            print(f" [CRITICAL ERROR] Impossible to load configuration {key} da S3: {e}")
+            raise e
+
+    def _get_ssm_parameter(self, param_name):
+        try:
+            response = self.ssm_client.get_parameter(Name=param_name, WithDecryption=False)
+            return response['Parameter']['Value']
+        except Exception as e:
+            print(f" [SSM ERROR] Impossible to extract parameter {param_name}: {e}")
+            raise e
+
+    def _resolve_sqs_url(self, queue_name):
+        try:
+            response = self.sqs_client.get_queue_url(QueueName=queue_name)
+            return response['QueueUrl']
+        except Exception as e:
+            print(f" [SQS ERROR] Impossible to resolute URL for the queue '{queue_name}': {e}")
+            raise e
+
 
     # scans s3 to find all trained models for a given dataset
     def list_available_models(self, dataset):

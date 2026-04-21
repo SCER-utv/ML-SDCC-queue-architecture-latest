@@ -1,0 +1,10 @@
+{
+  "asg_worker": "/drf/ec2/asg_name",
+  "dynamodb_table": "/drf/dynamodb/table_name",
+  "sqs_client": "/drf/sqs/client",
+  "sqs_client_resp": "/drf/sqs/client_response",
+  "sqs_train": "/drf/sqs/train_task",
+  "sqs_train_resp": "/drf/sqs/train_response",
+  "sqs_infer": "/drf/sqs/infer_task",
+  "sqs_infer_resp": "/drf/sqs/infer_response"
+}

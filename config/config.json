@@ -1,28 +1,13 @@
 {
   "model_id": "rf_distributed",
   "models_directory": "models/checkpoints/",
-  "s3_bucket": "drf-bucket-scer-utv",
-  "aws_region": "us-east-1",
-  "asg_name": "DRF-Worker-ASG",
 
   "inference_chunksize": 500000,
-  
-  "sqs_queues": {
-    "client": "https://sqs.us-east-1.amazonaws.com/436688417272/JobRequestQueue.fifo",
-	"client_response": "https://sqs.us-east-1.amazonaws.com/436688417272/ClientResponseQueue",
-    "train_task": "https://sqs.us-east-1.amazonaws.com/436688417272/train-task-queue",
-    "train_response": "https://sqs.us-east-1.amazonaws.com/436688417272/train-response-queue",
-    "infer_task": "https://sqs.us-east-1.amazonaws.com/436688417272/infer-task-queue",
-    "infer_response": "https://sqs.us-east-1.amazonaws.com/436688417272/infer-response-queue",
-    "sqs_message_group": "ML_Jobs"
-  },
 
   "split_ratios": {
     "train": 0.70
   },
 
-  "dynamodb_table": "JobStatus",
-  
   "dataset_registry": {
     "taxi": {
       "target": "Label",

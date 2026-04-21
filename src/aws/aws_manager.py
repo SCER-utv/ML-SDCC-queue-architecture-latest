@@ -1,3 +1,4 @@
+import json
 import os
 import io
 import time
@@ -12,18 +13,72 @@ import pandas as pd
 class AWSManager:
 
     def __init__(self, config):
-        self.config = config
-        self.region = config.get("aws_region")
-        self.bucket = config.get("s3_bucket")
-        self.asg_name = config.get("asg_name")
-        self.dynamodb_table = config.get("dynamodb_table", "JobStatus")
+        # 1. Retrieving base params from environment variables
+        self.region = os.getenv("AWS_REGION", "us-east-1")
+        self.bucket = os.getenv("S3_BUCKET_NAME")
 
-        # aws clients initialization
+        if not self.bucket:
+            raise ValueError(" [CRITICAL] S3_BUCKET_NAME environment variable is not set!")
+
+        #2. initializing aws clients
         self.s3_client = boto3.client('s3', region_name=self.region)
         self.asg_client = boto3.client('autoscaling', region_name=self.region)
         self.ec2_client = boto3.client('ec2', region_name=self.region)
-        self.dynamodb = boto3.resource('dynamodb', region_name=self.region)
         self.sqs_client = boto3.client('sqs', region_name=self.region)
+        self.ssm_client = boto3.client('ssm', region_name=self.region)
+
+        #get s3 key to retrieve configuration from ssm
+        config_key = os.getenv("S3_CONFIG_KEY", "config/ssm_paths.json")
+        ssm_paths = self._load_remote_config(config_key)
+
+        #3. retrieve of ssm params
+        print(" [INIT] Retrieving infrastructure from AWS SSM...")
+        self.asg_name = self._get_ssm_parameter(ssm_paths.get("asg_worker"))
+        self.dynamodb_table = self._get_ssm_parameter(ssm_paths.get("dynamodb_table"))
+
+        self.dynamodb = boto3.resource('dynamodb', region_name=self.region)
+
+        #4. initializing queues by retrieving name from ssm and url
+        print(" [INIT] SQS URL dynamic runtime resolution ...")
+        self.sqs_queues = {
+            "client": self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_client"))),
+            "client_response": self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_client_resp"))),
+            "train_task": self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_train"))),
+            "train_response": self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_train_resp"))),
+            "infer_task": self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_infer"))),
+            "infer_response": self._resolve_sqs_url(self._get_ssm_parameter(ssm_paths.get("sqs_infer_resp")))
+        }
+
+        self.config = config
+
+    #used to load ssm path file from s3
+    def _load_remote_config(self, key):
+        try:
+            print(f" [INIT] Download infrastructural configuration from s3://{self.bucket}/{key}...")
+            response = self.s3_client.get_object(Bucket=self.bucket, Key=key)
+            config_data = json.loads(response['Body'].read().decode('utf-8'))
+            return config_data
+        except Exception as e:
+            print(f" [CRITICAL ERROR] Impossible to load configuration {key} da S3: {e}")
+            raise e
+
+    #extracts the value (resource name) from AWS SSM Parameter Store
+    def _get_ssm_parameter(self, param_name):
+        try:
+            response = self.ssm_client.get_parameter(Name=param_name, WithDecryption=False)
+            return response['Parameter']['Value']
+        except Exception as e:
+            print(f" [SSM ERROR] Impossible to extract parameter {param_name}: {e}")
+            raise e
+
+    #gets a complete URL of a SQS queue
+    def _resolve_sqs_url(self, queue_name):
+        try:
+            response = self.sqs_client.get_queue_url(QueueName=queue_name)
+            return response['QueueUrl']
+        except Exception as e:
+            print(f" [SQS ERROR] Impossible to resolute URL for the queue '{queue_name}': {e}")
+            raise e
 
     # extract bucket and key from a s3 url
     @staticmethod

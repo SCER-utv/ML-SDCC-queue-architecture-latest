@@ -76,7 +76,7 @@ class TrainingHandler:
         s3_key = f"models/{task_data['dataset']}/{job_id}/task_{task_id}.joblib"
 
         print(" Uploading model to S3...")
-        self.aws.s3.upload_file(local_path, bucket, s3_key)
+        self.aws.s3_client.upload_file(local_path, bucket, s3_key)
 
         os.remove(local_path)
         return f"s3://{bucket}/{s3_key}"

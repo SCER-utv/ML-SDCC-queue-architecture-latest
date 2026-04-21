@@ -108,7 +108,7 @@ class InferencePipeline:
 
     # queues inference payloads for each worker
     def _dispatch_bulk_tasks(self, job_data, job_id, model_s3_uris, s3_inference_results):
-        infer_queue = self.config["sqs_queues"]["infer_task"]
+        infer_queue = self.aws.sqs_queues["infer_task"]
         for i, uri in enumerate(model_s3_uris):
             task_id = f"task_{i + 1}"
             if task_id not in s3_inference_results:
@@ -125,7 +125,7 @@ class InferencePipeline:
 
     # polls the sqs response queue until all workers complete their chunk evaluation
     def _wait_for_bulk_workers(self, job_id, num_workers, s3_inference_results, start_infer, historical_train_time):
-        infer_resp_queue = self.config["sqs_queues"]["infer_response"]
+        infer_resp_queue = self.aws.sqs_queues["infer_response"]
         print("\n [EVENT LOOP] Master listening actively for Worker inference responses...\n")
 
         while len(s3_inference_results) < num_workers:
@@ -183,7 +183,7 @@ class InferencePipeline:
 
     # broadcasts a single tuple payload to all workers
     def _dispatch_realtime_tasks(self, job_data, job_id, dataset, model_s3_uris, tuple_data):
-        infer_task_queue = self.config["sqs_queues"]["infer_task"]
+        infer_task_queue = self.aws.sqs_queues["infer_task"]
         for i, uri in enumerate(model_s3_uris):
             task = {
                 "job_id": job_id, "task_id": f"task_infer_rt_{i + 1}",
@@ -195,7 +195,7 @@ class InferencePipeline:
     def _wait_for_realtime_workers(self, num_workers, start_time):
         total_received_votes = []
         read_messages = 0
-        infer_resp_queue = self.config["sqs_queues"]["infer_response"]
+        infer_resp_queue = self.aws.sqs_queues["infer_response"]
 
         while read_messages < num_workers:
             res = self.aws.sqs_client.receive_message(QueueUrl=infer_resp_queue, WaitTimeSeconds=2)
@@ -230,7 +230,7 @@ class InferencePipeline:
 
     # returns completion status and predictions to the client application via sqs
     def _send_client_response(self, job_id, mode, total_time, prediction=None, task_str=None):
-        client_response_queue = self.config.get("sqs_queues", {}).get("client_response")
+        client_response_queue = self.aws.sqs_queues["client_response"]
         if client_response_queue:
             payload = {"job_id": job_id, "mode": mode, "total_time_sec": round(total_time, 2)}
             if prediction is not None:
