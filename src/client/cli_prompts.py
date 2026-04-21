@@ -159,8 +159,8 @@ class CLI:
     def prompt_experiment_name(self):
         print("\n" + "-" * 40)
         print(" Experiment Configuration (Custom Dataset)")
-        print(" Inserendo un nome esperimento, i file di Train/Test verranno")
-        print(" salvati e riutilizzati per garantirti benchmark costanti.")
+        print(" By inserting a experiment name, Train/Test files will be saved for future executions, ")
+        print("to guarantee constant benchmarks.")
         while True:
             exp_name = input("\n Nome Esperimento (o invio per restare isolato): ").strip()
             if not exp_name:
@@ -169,7 +169,7 @@ class CLI:
             # validate: alphanumeric and dash/underscore only for safe s3 keys
             if all(c.isalnum() or c in "-_" for c in exp_name):
                 return exp_name
-            print(" [ERROR] Usa solo lettere, numeri, '-' o '_'.")
+            print(" [ERROR] Use only letters, numbers, '-' or '_'.")
 
     # gathers cluster settings and machine learning hyperparameters
     def prompt_cluster_config(self, dataset_info):
@@ -180,7 +180,7 @@ class CLI:
         while True:
             try:
                 config_data['workers'] = int(input(" Enter number of Workers (e.g., 4): "))
-                config_data['trees'] = int(input(" Enter TOTAL number of Trees (e.g., 100): "))
+                config_data['trees'] = int(input(" Enter TOTAL number of Trees (e.g., 100) (if you want to use pre-tuned hyperparams, insert a valid num of trees, otherwise closest configuration will we used: "))
                 if config_data['workers'] > 0 and config_data['trees'] > 0:
                     break
                 print(" Values must be greater than zero.")
