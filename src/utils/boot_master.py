@@ -2,10 +2,10 @@ import os
 import sys
 import boto3
 
-
 def manage_master(action):
-    # 1. Retrieve the region from environment variables (same logic as the Client)
+    # 1. Retrieve the region and SSM path from environment variables
     region = os.getenv("AWS_REGION", "us-east-1")
+    ssm_param = os.getenv("SSM_MASTER_ASG_PARAM", "/drf/ec2/master_asg_name")
 
     try:
         # Initialize Boto3 clients
@@ -13,9 +13,8 @@ def manage_master(action):
         asg = boto3.client('autoscaling', region_name=region)
 
         # 2. Retrieve the Master ASG name from SSM
-        param_name = "/drf/ec2/master_asg_name"
-        print(f" [INIT] Reading Master ASG name from SSM ({param_name})...")
-        response = ssm.get_parameter(Name=param_name)
+        print(f" [INIT] Reading Master ASG name from SSM ({ssm_param})...")
+        response = ssm.get_parameter(Name=ssm_param)
         master_asg_name = response['Parameter']['Value']
 
         # 3. Calculate desired capacity based on the command
@@ -32,7 +31,7 @@ def manage_master(action):
             MaxSize=1
         )
 
-        state = "STARTED 🟢" if action == "start" else "STOPPED 🔴"
+        state = "STARTED" if action == "start" else "STOPPED"
         print(f"\n {'=' * 40}")
         print(f" SUCCESS! The Master node has been {state}.")
         if action == "start":
@@ -40,13 +39,12 @@ def manage_master(action):
         print(f" {'=' * 40}\n")
 
     except ssm.exceptions.ParameterNotFound:
-        print(f"\n [CRITICAL ERROR] Parameter '{param_name}' not found on AWS SSM!")
+        print(f"\n [CRITICAL ERROR] Parameter '{ssm_param}' not found on AWS SSM!")
         print(" You must create it on AWS Parameter Store setting the Master ASG name as 'Value'.")
         sys.exit(1)
     except Exception as e:
         print(f"\n [ERROR] Unable to communicate with AWS: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     # Simple CLI to accept "start" or "stop" as an argument
