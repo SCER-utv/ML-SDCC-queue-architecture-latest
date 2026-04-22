@@ -27,6 +27,12 @@ class TrainingPipeline:
         calculated_train_rows = None
         if not tasks_dispatched:
             calculated_train_rows = self._prepare_dataset(job_data)
+        #this is an important fault tolerance part: otherwise it will use not updated paths
+        else:
+            if job_data.get('needs_split'):
+                bucket = self.aws.bucket
+                job_data['train_s3_url'] = f"s3://{bucket}/{job_data['target_train_key']}"
+                job_data['test_s3_url'] = f"s3://{bucket}/{job_data['target_test_key']}"
 
         # 4. fan-out task generation
         if not tasks_dispatched:
@@ -218,7 +224,7 @@ class TrainingPipeline:
                 "max_samples": raw_samples,
                 "class_weight": conf.get('class_weight', None),
                 "n_jobs": conf.get('n_jobs', -1),
-                "is_custom": True,
+                "is_custom": job_data.get('is_custom', False),
                 "custom_target_col": target_col,
                 "task_type": task_type
             }

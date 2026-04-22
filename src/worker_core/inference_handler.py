@@ -105,7 +105,7 @@ class InferenceHandler:
         # compress, save locally as a numpy array, and upload back to s3
         local_npy_path = f"/tmp/results_{job_id}_{task_id}.npy"
         np.save(local_npy_path, numpy_results)
-        s3_key = f"results/{task_data['dataset']}/{task_data.get('dataset_variant', '1M')}/{job_id}/task_{task_id}.npy"
+        s3_key = f"results/{task_data['dataset']}/{task_data.get('dataset_variant', '1M')}/{job_id}/{task_id}.npy"
         self.aws.s3_client.upload_file(local_npy_path, bucket, s3_key)
         os.remove(local_npy_path)
 
