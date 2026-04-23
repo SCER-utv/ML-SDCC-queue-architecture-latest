@@ -83,6 +83,8 @@ class AWSManager:
     # extract bucket and key from a s3 url
     @staticmethod
     def parse_s3_uri(s3_uri):
+        if s3_uri is None or s3_uri == "":
+            return "", ""
         parts = s3_uri.replace("s3://", "").split("/", 1)
         return parts[0], parts[1]
 

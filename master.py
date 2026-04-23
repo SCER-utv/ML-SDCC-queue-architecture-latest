@@ -57,8 +57,8 @@ def resolve_paths(job_data, config, aws):
             test_url = f"s3://{bucket}/{folder}/test.csv"
             raw_source = job_data.get('custom_train_url')
         else:
-            train_url = job_data.get('custom_train_url')
-            test_url = job_data.get('custom_test_url')
+            train_url = job_data.get('custom_train_url', "")
+            test_url = job_data.get('custom_test_url', "")
 
     dataset_paths = JobPaths(
         train_url=train_url,

@@ -69,11 +69,10 @@ class TrainingPipeline:
     def _ensure_dataset_ready(self, job_data):
         dataset: JobPaths = job_data['dataset_paths']
 
-        try:
-            bucket, target_train_key = self.aws.parse_s3_uri(dataset.train_url)
-            _, target_test_key = self.aws.parse_s3_uri(dataset.test_url)
-        except Exception:
-            raise ValueError(f"Invalid S3 URL format for train/test target. Must be s3://bucket-name/path/to/file.csv")
+
+        bucket, target_train_key = self.aws.parse_s3_uri(dataset.train_url)
+        _, target_test_key = self.aws.parse_s3_uri(dataset.test_url)
+
 
         # native fault tolerance: does s3 file already exist?
         if self.aws.check_s3_file_exists(bucket, target_train_key):

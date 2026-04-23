@@ -1,4 +1,5 @@
 import sys
+import datetime
 
 # handles all command-line interactions with the user
 class CLI:
@@ -166,10 +167,11 @@ class CLI:
             if not exp_name:
                 return None
 
+            sanitized_name = exp_name.replace(" ", "-").replace("_", "-").lower()
             # validate: alphanumeric and dash/underscore only for safe s3 keys
-            if all(c.isalnum() or c in "-_" for c in exp_name):
-                return exp_name
-            print(" [ERROR] Use only letters, numbers, '-' or '_'.")
+            if all(c.isalnum() or c == "-" for c in sanitized_name):
+                return sanitized_name
+            print(" [ERROR] Use only letters, numbers, '-' or ' ' (blank space will be converted to -.")
 
     # gathers cluster settings and machine learning hyperparameters
     def prompt_cluster_config(self, dataset_info):
@@ -335,6 +337,9 @@ class CLI:
                     workers_count = next((p.replace('workers', '') for p in parts if 'workers' in p), "?")
                     strat_label = "HOMO" if "homogeneous" in m else ("HETE" if "heterogeneous" in m else "N/A ")
 
+                    date_formatted, time_formatted = "????/??/??", "??:??:??"
+
+                    # CASO 1: Vecchio formato con Data e Ora separati (se ne hai ancora su S3)
                     if len(parts) >= 2 and parts[-2].isdigit() and parts[-1].isdigit():
                         raw_date, raw_time = parts[-2], parts[-1]
                         if len(raw_date) == 8 and len(raw_time) == 6:
@@ -342,8 +347,17 @@ class CLI:
                             time_formatted = f"{raw_time[0:2]}:{raw_time[2:4]}:{raw_time[4:6]}"
                         else:
                             date_formatted, time_formatted = raw_date, raw_time
-                    else:
-                        date_formatted, time_formatted = "????/??/??", "??:??:??"
+
+                    # CASO 2: Nuovo formato con Unix Timestamp singolo (es. 1776195424)
+                    elif len(parts) >= 1 and parts[-1].isdigit():
+                        try:
+                            timestamp = int(parts[-1])
+                            # Converte i secondi in un oggetto datetime
+                            dt = datetime.datetime.fromtimestamp(timestamp)
+                            date_formatted = dt.strftime("%d/%m/%Y")
+                            time_formatted = dt.strftime("%H:%M:%S")
+                        except Exception:
+                            pass
                     print(
                         f"  [{i}]  Trees: {trees_count:<4} | Workers: {workers_count:<2} | Strat: {strat_label} | Date: {date_formatted} {time_formatted}  (ID: {m})")
                 except Exception:

@@ -24,8 +24,14 @@ def main():
     dataset_info = cli.prompt_dataset_selection(mode)
 
     experiment_name = None
-    if dataset_info['is_custom'] and mode in ['train', 'train_and_infer', 'bulk_infer']:
+    if dataset_info['is_custom']:
         experiment_name = cli.prompt_experiment_name()
+
+        if experiment_name:
+            dataset_info['variant'] = experiment_name
+        else:
+            dataset_info['variant'] = "user_provided"
+
 
     cluster_config = {}
     if mode in ['train', 'train_and_infer']:
@@ -42,13 +48,20 @@ def main():
     # handle real-time inference inputs and feature extraction
     tuple_data = None
     if mode == 'infer':
-        # pass the base url to download feature headers for prompt guidance
         s3_key = ""
         if dataset_info['is_custom']:
-            s3_key = dataset_info['train_url'].replace(f"s3://{aws.bucket}/", "") if dataset_info.get('train_url') else ""
+            # Usiamo .get() per sicurezza e controlliamo che l'URL non sia None prima di fare .replace()
+            raw_url = dataset_info.get('train_url') or dataset_info.get('test_url')
+
+            if raw_url:
+                s3_key = raw_url.replace(f"s3://{aws.bucket}/", "")
+            else:
+                # Se non c'è proprio nessun URL, s3_key rimane "" e non crasha
+                pass
         else:
             s3_key = cli.datasets_metadata[dataset_info['name']][dataset_info['variant']]['train_path']
 
+        # Ora passiamo s3_key a prompt_realtime_input
         tuple_data = cli.prompt_realtime_input(aws, s3_key, dataset_info)
 
     # construct the thin payload representing the client contract for the master node
