@@ -162,7 +162,7 @@ class CLI:
         print(" By inserting a experiment name, Train/Test files will be saved for future executions, ")
         print("to guarantee constant benchmarks.")
         while True:
-            exp_name = input("\n Nome Esperimento (o invio per restare isolato): ").strip()
+            exp_name = input("\n experiment name (press Enter to remain isolated): ").strip()
             if not exp_name:
                 return None
 
