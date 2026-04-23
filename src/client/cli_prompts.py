@@ -179,11 +179,14 @@ class CLI:
         config_data = {}
         while True:
             try:
-                config_data['workers'] = int(input(" Enter number of Workers (e.g., 4): "))
+                config_data['workers'] = int(input(" Enter number of Workers (1-8): "))
                 config_data['trees'] = int(input(" Enter TOTAL number of Trees (e.g., 100) (if you want to use pre-tuned hyperparams, insert a valid num of trees, otherwise closest configuration will we used: "))
-                if config_data['workers'] > 0 and config_data['trees'] > 0:
+                if config_data['workers'] <= 0 or config_data['trees'] <= 0:
+                    print(" [ERROR] Values must be greater than zero.")
+                elif config_data['workers'] > 8:
+                    print(" [ERROR] The maximum number of workers allowed is 8. Please try again.")
+                else:
                     break
-                print(" Values must be greater than zero.")
             except ValueError:
                 print(" Invalid input. Please enter integers only.")
 
