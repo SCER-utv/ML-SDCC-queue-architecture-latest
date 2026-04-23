@@ -207,7 +207,7 @@ class CLI:
         else:
             print("\n Select Hyperparameter Source:")
             if dataset_info['is_custom']:
-                print("  1) Default Generic Parameters (Standard Scikit-Learn)")
+                print("  1) Default Generic Parameters for fast execution (Standard Scikit-Learn)")
                 print("  2) Manual Configuration")
             else:
                 print("  1) Golden Standard (Auto-optimized per dataset)")
