@@ -69,8 +69,11 @@ class TrainingPipeline:
     def _ensure_dataset_ready(self, job_data):
         dataset: JobPaths = job_data['dataset_paths']
 
-        bucket, target_train_key = self.aws.parse_s3_uri(dataset.train_url)
-        _, target_test_key = self.aws.parse_s3_uri(dataset.test_url)
+        try:
+            bucket, target_train_key = self.aws.parse_s3_uri(dataset.train_url)
+            _, target_test_key = self.aws.parse_s3_uri(dataset.test_url)
+        except Exception:
+            raise ValueError(f"Invalid S3 URL format for train/test target. Must be s3://bucket-name/path/to/file.csv")
 
         # native fault tolerance: does s3 file already exist?
         if self.aws.check_s3_file_exists(bucket, target_train_key):
@@ -80,6 +83,16 @@ class TrainingPipeline:
         # if it does not exist, it creates it from the raw file
         if dataset.raw_source_to_split:
             print(f" [PIPELINE] Train data not found. Starting split from {dataset.raw_source_to_split}...")
+
+            try:
+                raw_bucket, raw_key = self.aws.parse_s3_uri(dataset.raw_source_to_split)
+            except Exception:
+                raise ValueError(f"Invalid S3 URL format for raw source: {dataset.raw_source_to_split}")
+
+            if not self.aws.check_s3_file_exists(raw_bucket, raw_key):
+                raise ValueError(
+                    f"Cannot perform split: the source file {dataset.raw_source_to_split} DOES NOT exist on S3!")
+
             try:
                 calculated_train_rows, _ = self.aws.execute_streaming_split(
                     dataset.raw_source_to_split,

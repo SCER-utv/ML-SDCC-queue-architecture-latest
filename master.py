@@ -123,7 +123,27 @@ def main():
                     print(f" [WARNING] Unknown mode requested: {mode}")
 
             except Exception as e:
-                print(f" [CRITICAL ERROR] Pipeline execution failed: {e}")
+                error_msg = str(e)
+                print(f" [CRITICAL ERROR] Pipeline execution failed: {error_msg}")
+
+                try:
+                    error_payload = {
+                        "job_id": job_id,
+                        "status": "FAILED",
+                        "message": error_msg
+                    }
+
+                    resp_queue_url = aws.sqs_queues.get("client_response")
+                    if resp_queue_url:
+                        aws.sqs_client.send_message(
+                            QueueUrl=resp_queue_url,
+                            MessageBody=json.dumps(error_payload)
+                        )
+                        print(" [MASTER] Error successfully communicated to Client via SQS.")
+                    else:
+                        print(" [MASTER ERROR] Could not find response queue URL to notify client.")
+                except Exception as sqs_err:
+                    print(f" [MASTER ERROR] Failed to send error message to SQS: {sqs_err}")
             finally:
                 # ensure heartbeat stops and the processed message is deleted from the queue
                 stop_event.set()

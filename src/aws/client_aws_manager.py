@@ -166,6 +166,17 @@ class ClientAWSManager:
                         # check if it's the response for our exact job
                         if body.get("job_id") == payload['job_id']:
                             print("\n" + "=" * 60)
+
+                            if body.get("status") == "FAILED":
+                                print("CRITICAL ERROR FROM MASTER NODE")
+                                print("=" * 60)
+                                print(f" REASON: {body.get('message', 'Unknown Error')}")
+                                print("=" * 60 + "\n")
+
+                                self.sqs_client.delete_message(QueueUrl=self.client_resp_queue, ReceiptHandle=receipt)
+                                result_found = True
+                                break
+
                             if payload['mode'] == 'train':
                                 print(" DISTRIBUTED TRAINING COMPLETED!")
                                 print("=" * 60)
