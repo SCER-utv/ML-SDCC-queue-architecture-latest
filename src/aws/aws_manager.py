@@ -243,7 +243,7 @@ class AWSManager:
 
 
 
-    # dynamically scales ec2 instances using the auto scaling group
+    # dynamically scales ec2 instances using the auto-scaling group
     def scale_worker_infrastructure(self, num_workers):
         print(f" [ASG] Setting desired capacity to {num_workers} workers...")
         self.asg_client.update_auto_scaling_group(
@@ -285,7 +285,7 @@ class AWSManager:
                 try:
                     self.ec2_client.create_tags(
                         Resources=[instance_id],
-                        Tags=[{'Key': 'Name', 'Value': f"DRF-worker_{i + 1}"}]
+                        Tags=[{'Key': 'Name', 'Value': f"DRF-worker-{i + 1}"}]
                     )
                 except Exception:
                     pass
