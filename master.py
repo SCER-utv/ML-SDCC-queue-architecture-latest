@@ -7,6 +7,7 @@ from src.master_core.training_pipeline import TrainingPipeline
 from src.utils.config import load_config
 
 from src.aws.aws_manager import AWSManager
+from src.utils.job_paths import JobPaths
 
 
 # extends sqs message visibility in the background to prevent timeout during long jobs
@@ -31,43 +32,42 @@ def resolve_paths(job_data, config, aws):
 
     experiment_name = job_data.get('experiment_name')
 
+    train_url, test_url, metrics_key, raw_source = "", "", "", None
+
     if not is_custom:
         # handle official benchmark datasets (gold standard)
         meta = config['datasets_metadata'][job_data['dataset']][job_data['dataset_variant']]
+        metrics_key = f"results/{job_data['dataset']}/{job_data['dataset']}_{job_data['dataset_variant']}_distributed_results.csv"
 
-        if mode in ['train', 'train_and_infer']:
-            if needs_split:
-                job_data['train_s3_url'] = f"s3://{bucket}/{meta['interim_path']}"
-                job_data['target_train_key'] = meta['train_path']
-                job_data['target_test_key'] = meta['test_path']
-            else:
-                job_data['train_s3_url'] = f"s3://{bucket}/{meta['train_path']}"
-                job_data['test_s3_url'] = f"s3://{bucket}/{meta['test_path']}"
-        elif mode == 'bulk_infer':
-            job_data['test_s3_url'] = f"s3://{bucket}/{meta['test_path']}"
+        train_url = f"s3://{bucket}/{meta['train_path']}"
+        test_url = f"s3://{bucket}/{meta['test_path']}"
 
-        job_data['metrics_s3_key'] = f"metrics/gold_standard/{job_data['dataset']}/{job_data['dataset_variant']}/results_{job_id}.json"
+        if needs_split:
+            raw_source = f"s3://{bucket}/{meta['interim_path']}"
 
     else:
         # handle user-provided datasets and custom experiments
-        folder_base = f"experiments/{experiment_name}" if experiment_name else f"splits/{job_id}"
+        folder = f"experiments/{experiment_name}" if experiment_name else f"splits/{job_id}"
+        file_name = experiment_name if experiment_name else job_id
+        metrics_key = f"{folder}/{file_name}_distributed_results.csv"
 
-        if mode in ['train', 'train_and_infer']:
-            job_data['train_s3_url'] = job_data.get('custom_train_url')
+        if needs_split:
+            # Sappiamo già come si chiameranno i file finali
+            train_url = f"s3://{bucket}/{folder}/train.csv"
+            test_url = f"s3://{bucket}/{folder}/test.csv"
+            raw_source = job_data.get('custom_train_url')
+        else:
+            train_url = job_data.get('custom_train_url')
+            test_url = job_data.get('custom_test_url')
 
-            if needs_split:
-                # force split outputs to target these exact keys
-                job_data['target_train_key'] = f"{folder_base}/train.csv"
-                job_data['target_test_key'] = f"{folder_base}/test.csv"
-            else:
-                job_data['test_s3_url'] = job_data.get('custom_test_url')
+    dataset_paths = JobPaths(
+        train_url=train_url,
+        test_url=test_url,
+        metrics_key=metrics_key,
+        raw_source_to_split=raw_source
+    )
 
-        elif mode == 'bulk_infer':
-            job_data['test_s3_url'] = job_data.get('custom_test_url')
-
-        # isolate evaluation metrics next to the experiment csv files
-        job_data['metrics_s3_key'] = f"{folder_base}/results_{job_id}.json"
-
+    job_data['dataset_paths'] = dataset_paths
     return job_data
 
 

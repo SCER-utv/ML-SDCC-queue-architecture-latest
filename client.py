@@ -45,7 +45,7 @@ def main():
         # pass the base url to download feature headers for prompt guidance
         s3_key = ""
         if dataset_info['is_custom']:
-            s3_key = dataset_info['train_url'].replace(f"s3://{aws.bucket}/", "") if dataset_info['train_url'] else ""
+            s3_key = dataset_info['train_url'].replace(f"s3://{aws.bucket}/", "") if dataset_info.get('train_url') else ""
         else:
             s3_key = cli.datasets_metadata[dataset_info['name']][dataset_info['variant']]['train_path']
 

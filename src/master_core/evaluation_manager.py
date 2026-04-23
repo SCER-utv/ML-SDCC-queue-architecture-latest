@@ -19,9 +19,10 @@ class EvaluationManager:
         print(" FINAL AGGREGATION & EVALUATION PHASE")
         print("=" * 50)
 
+        dataset_paths = job_data['dataset_paths']
         task_type = job_data['task_type']
         target_col = job_data['target_column']
-        test_s3_uri = job_data['test_s3_url']
+        test_s3_uri = dataset_paths.test_url
 
         predictions_list = self._download_worker_results(s3_inference_results)
         if not predictions_list:
@@ -48,10 +49,12 @@ class EvaluationManager:
         strategy_name = "Homogeneous" if strategy == "homogeneous" else "Heterogeneous"
         experiment_name = job_data['experiment_name']
 
+        metrics_key = dataset_paths.metrics_key
+
         # saves the final metrics and cleans up temporary inference files
         self.aws.save_metrics(test_s3_uri, experiment_name, dataset_name, dataset_variant, num_workers, trees,
                               strategy_name, train_time,
-                              infer_time, metrics_dict)
+                              infer_time, metrics_dict, metrics_key)
         self.aws.cleanup_s3_inference_files(s3_inference_results)
 
     # downloads and loads temporary .npy files containing worker predictions
@@ -89,9 +92,9 @@ class EvaluationManager:
             auc = 0.0
 
         acc = accuracy_score(y_true, final_prediction)
-        precision = precision_score(y_true, final_prediction, zero_division=0, average='macro')
-        recall = recall_score(y_true, final_prediction, zero_division=0, average='macro')
-        f1 = f1_score(y_true, final_prediction, zero_division=0, average='macro')
+        precision = precision_score(y_true, final_prediction, zero_division=0)
+        recall = recall_score(y_true, final_prediction, zero_division=0)
+        f1 = f1_score(y_true, final_prediction, zero_division=0)
 
         print(
             f"\n GLOBAL DISTRIBUTED RESULTS:\n ROC-AUC: {auc:.4f}\n Accuracy: {acc:.4f}\n Precision: {precision:.4f}\n Recall: {recall:.4f}\n F1-Score: {f1:.4f}")

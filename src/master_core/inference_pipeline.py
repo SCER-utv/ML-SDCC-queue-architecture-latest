@@ -2,6 +2,7 @@ import time
 import json
 import math
 from src.utils.config import load_config
+from src.utils.job_paths import JobPaths
 
 
 # orchestrates both bulk and real-time inference workflows
@@ -109,6 +110,7 @@ class InferencePipeline:
     # queues inference payloads for each worker
     def _dispatch_bulk_tasks(self, job_data, job_id, model_s3_uris, s3_inference_results):
         infer_queue = self.aws.sqs_queues["infer_task"]
+        dataset_paths = job_data['dataset_paths']
         for i, uri in enumerate(model_s3_uris):
             task_id = f"task_{i + 1}"
             if task_id not in s3_inference_results:
@@ -117,7 +119,7 @@ class InferencePipeline:
                     "task_id": task_id,
                     "dataset": job_data['dataset'],
                     "dataset_variant": job_data.get('dataset_variant', '1M'),
-                    "test_dataset_uri": job_data['test_s3_url'],
+                    "test_dataset_uri": dataset_paths.test_url,
                     "model_s3_uri": uri
                 }
                 self.aws.sqs_client.send_message(QueueUrl=infer_queue, MessageBody=json.dumps(infer_task))

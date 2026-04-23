@@ -3,6 +3,8 @@ import json
 import math
 import os
 from src.utils.config import load_config
+from src.utils.job_paths import JobPaths
+
 
 # orchestrates the distributed training workflow
 class TrainingPipeline:
@@ -26,13 +28,7 @@ class TrainingPipeline:
         # 3. data split management
         calculated_train_rows = None
         if not tasks_dispatched:
-            calculated_train_rows = self._prepare_dataset(job_data)
-        #this is an important fault tolerance part: otherwise it will use not updated paths
-        else:
-            if job_data.get('needs_split'):
-                bucket = self.aws.bucket
-                job_data['train_s3_url'] = f"s3://{bucket}/{job_data['target_train_key']}"
-                job_data['test_s3_url'] = f"s3://{bucket}/{job_data['target_test_key']}"
+            calculated_train_rows = self._ensure_dataset_ready(job_data)
 
         # 4. fan-out task generation
         if not tasks_dispatched:
@@ -70,42 +66,34 @@ class TrainingPipeline:
         return completed_train_tasks, s3_results, start_train, tasks_dispatched, train_time
 
     # handles dataset streaming split and row counting
-    def _prepare_dataset(self, job_data):
-        needs_split = job_data.get('needs_split', False)
-        train_source_url = job_data['train_s3_url']
-        bucket, source_key = self.aws.parse_s3_uri(train_source_url)
+    def _ensure_dataset_ready(self, job_data):
+        dataset: JobPaths = job_data['dataset_paths']
 
-        # master decides the target paths for saving files
-        target_train_key = job_data.get('target_train_key')
-        target_test_key = job_data.get('target_test_key')
+        bucket, target_train_key = self.aws.parse_s3_uri(dataset.train_url)
+        _, target_test_key = self.aws.parse_s3_uri(dataset.test_url)
 
-        if needs_split and target_train_key and target_test_key:
-            # persistence check to avoid recreating existing splits for benchmark consistency
-            if not self.aws.check_s3_file_exists(bucket, target_train_key):
-                print(f" [PIPELINE] Target split not found. Splitting {source_key}...")
-                try:
-                    calculated_train_rows, _ = self.aws.execute_streaming_split(
-                        train_source_url,
-                        target_train_key=target_train_key,
-                        target_test_key=target_test_key
-                    )
-                    # dynamically update urls in the payload for workers
-                    job_data['train_s3_url'] = f"s3://{bucket}/{target_train_key}"
-                    job_data['test_s3_url'] = f"s3://{bucket}/{target_test_key}"
-                    return calculated_train_rows
-                except Exception as e:
-                    print(f" [CRITICAL] Split failed: {e}")
-                    raise e
-            else:
-                print(
-                    f" [PIPELINE] Found existing dataset at {target_train_key}. Bypassing split to guarantee benchmark consistency.")
-                job_data['train_s3_url'] = f"s3://{bucket}/{target_train_key}"
-                job_data['test_s3_url'] = f"s3://{bucket}/{target_test_key}"
-                return self.aws.get_total_rows_s3_select(bucket, target_train_key)
+        # native fault tolerance: does s3 file already exist?
+        if self.aws.check_s3_file_exists(bucket, target_train_key):
+            print(f" [PIPELINE] Dataset ready on {dataset.train_url}. (Bypass split / Recovery active)")
+            return self.aws.get_total_rows_s3_select(bucket, target_train_key)
+
+        # if it does not exist, it creates it from the raw file
+        if dataset.raw_source_to_split:
+            print(f" [PIPELINE] Train data not found. Starting split from {dataset.raw_source_to_split}...")
+            try:
+                calculated_train_rows, _ = self.aws.execute_streaming_split(
+                    dataset.raw_source_to_split,
+                    target_train_key=target_train_key,
+                    target_test_key=target_test_key
+                )
+                return calculated_train_rows
+            except Exception as e:
+                print(f" [CRITICAL] Split failed: {e}")
+                raise e
         else:
-            print(" [PIPELINE] No split required. Using source dataset directly.")
-            return self.aws.get_total_rows_s3_select(bucket, source_key)
-
+            # extreme error, file to split not found
+            raise ValueError(
+                f"Impossible to start job: {dataset.train_url} does not exist and the split has not been requested.")
 
 
     def _fetch_target_strategies(self, strategy, dataset, num_trees_total, num_workers):
@@ -153,8 +141,9 @@ class TrainingPipeline:
         num_workers = job_data['num_workers']
         num_trees_total = job_data['num_trees']
         dataset = job_data['dataset']
+        dataset_paths = job_data['dataset_paths']
         strategy = job_data.get('strategy', 'homogeneous')
-        train_s3_uri = job_data['train_s3_url']
+        train_s3_uri = dataset_paths.train_url
         task_type = job_data['task_type']
         target_col = job_data['target_column']
 

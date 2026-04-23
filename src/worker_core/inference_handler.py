@@ -17,8 +17,10 @@ class InferenceHandler:
 
     # processes the inference task by downloading the model and routing to either real-time or bulk chunked prediction
     def process(self, task_data):
-        job_id, task_id = task_data['job_id'], task_data['task_id']
+        job_id, task_id = task_data['job_id'], task_data['task_id']      
         bucket, model_key = self.aws.parse_s3_uri(task_data['model_s3_uri'])
+
+        print(f"Test set source: {task_data.get('test_dataset_uri', 'N/A (Real time inference)')}")
 
         """
         # ==========================================================
@@ -90,7 +92,7 @@ class InferenceHandler:
         for chunk in pd.read_csv(task_data['test_dataset_uri'], chunksize=self.chunk_size, low_memory=False):
             if is_custom:
                 X = chunk.drop(columns=[target_col]).fillna(0) if target_col in chunk.columns else chunk.fillna(0)
-                preds = np.array([tree.predict(X) for tree in rf.estimators_])
+                preds = np.array([tree.predict(X.values) for tree in rf.estimators_])
                 chunk_results = np.mean(preds, axis=0)
             else:
                 chunk_results = ml_handler.process_and_predict(rf, chunk)

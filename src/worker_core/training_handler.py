@@ -19,6 +19,7 @@ class TrainingHandler:
         dataset_uri = task_data['dataset_s3_path']
 
         print(f" [TRAIN] Starting {task_id}. Downloading {task_data['num_rows']} rows...")
+        print(f" Train set source: {dataset_uri}")
 
         # 1. perform zero-waste ram partial reading of the dataset from s3
         skip = task_data.get('skip_rows', 0)
